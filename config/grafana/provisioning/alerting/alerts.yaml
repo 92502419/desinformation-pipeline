@@ -42,7 +42,13 @@ groups:
             datasourceUid: elasticsearch-articles
             model:
               alias: "Score Drift Max"
-              bucketAggs: []
+              bucketAggs:
+                - id: "2"
+                  type: date_histogram
+                  field: processed_at
+                  settings:
+                    interval: "5m"
+                    min_doc_count: "0"
               metrics:
                 - id: "1"
                   type: max
@@ -96,7 +102,13 @@ groups:
             datasourceUid: elasticsearch-articles
             model:
               alias: "Score Drift"
-              bucketAggs: []
+              bucketAggs:
+                - id: "2"
+                  type: date_histogram
+                  field: processed_at
+                  settings:
+                    interval: "5m"
+                    min_doc_count: "0"
               metrics:
                 - id: "1"
                   type: max
@@ -150,7 +162,13 @@ groups:
             datasourceUid: elasticsearch-articles
             model:
               alias: "Fake Rate"
-              bucketAggs: []
+              bucketAggs:
+                - id: "2"
+                  type: date_histogram
+                  field: processed_at
+                  settings:
+                    interval: "5m"
+                    min_doc_count: "0"
               metrics:
                 - id: "1"
                   type: avg
@@ -204,7 +222,13 @@ groups:
             datasourceUid: elasticsearch-articles
             model:
               alias: "Fake Rate"
-              bucketAggs: []
+              bucketAggs:
+                - id: "2"
+                  type: date_histogram
+                  field: processed_at
+                  settings:
+                    interval: "5m"
+                    min_doc_count: "0"
               metrics:
                 - id: "1"
                   type: avg
@@ -258,7 +282,13 @@ groups:
             datasourceUid: elasticsearch-articles
             model:
               alias: "Avg Confidence"
-              bucketAggs: []
+              bucketAggs:
+                - id: "2"
+                  type: date_histogram
+                  field: processed_at
+                  settings:
+                    interval: "5m"
+                    min_doc_count: "0"
               metrics:
                 - id: "1"
                   type: avg

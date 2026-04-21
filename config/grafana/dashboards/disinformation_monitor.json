@@ -64,7 +64,7 @@
       "options": {
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "sum"
           ]
         },
         "orientation": "auto",
@@ -74,7 +74,17 @@
       "targets": [
         {
           "alias": "Total Articles",
-          "bucketAggs": [],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "processed_at",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ],
           "datasource": {
             "type": "elasticsearch",
             "uid": "${DS_ELASTICSEARCH}"
@@ -133,7 +143,7 @@
       "options": {
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "sum"
           ]
         },
         "colorMode": "background"
@@ -141,7 +151,17 @@
       "targets": [
         {
           "alias": "Fake Articles",
-          "bucketAggs": [],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "processed_at",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ],
           "datasource": {
             "type": "elasticsearch",
             "uid": "${DS_ELASTICSEARCH}"
@@ -213,7 +233,17 @@
       "targets": [
         {
           "alias": "Fake Rate",
-          "bucketAggs": [],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "processed_at",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ],
           "datasource": {
             "type": "elasticsearch",
             "uid": "${DS_ELASTICSEARCH}"
@@ -288,7 +318,17 @@
       "targets": [
         {
           "alias": "Drift Score",
-          "bucketAggs": [],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "processed_at",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ],
           "datasource": {
             "type": "elasticsearch",
             "uid": "${DS_ELASTICSEARCH}"
@@ -357,7 +397,17 @@
       "targets": [
         {
           "alias": "Avg Confidence",
-          "bucketAggs": [],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "processed_at",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ],
           "datasource": {
             "type": "elasticsearch",
             "uid": "${DS_ELASTICSEARCH}"
@@ -436,7 +486,17 @@
       "targets": [
         {
           "alias": "Drift Active",
-          "bucketAggs": [],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "processed_at",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ],
           "datasource": {
             "type": "elasticsearch",
             "uid": "${DS_ELASTICSEARCH}"
