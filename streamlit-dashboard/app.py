@@ -41,19 +41,36 @@ except ImportError:
 
 
 # ── Configuration (st.secrets → env vars → défaut) ───────────────────────────
+# Vérifie si un fichier secrets.toml existe pour éviter les avertissements
+# "No secrets found" inutiles dans l'environnement Docker
+_SECRETS_PATHS = [
+    "/root/.streamlit/secrets.toml",
+    "/app/.streamlit/secrets.toml",
+    os.path.join(os.path.expanduser("~"), ".streamlit", "secrets.toml"),
+]
+_HAS_SECRETS_FILE = any(os.path.exists(p) for p in _SECRETS_PATHS)
+
+# Détection de l'environnement Streamlit Cloud (/mount/src est le chemin de montage)
+_IS_CLOUD = os.path.exists("/mount/src")
+
 def _cfg(secret_key, env_key, default):
-    try:
-        val = st.secrets.get(secret_key)
-        if val is not None:
-            return str(val)
-    except Exception:
-        pass
+    if _HAS_SECRETS_FILE:
+        try:
+            val = st.secrets.get(secret_key)
+            if val is not None:
+                return str(val)
+        except Exception:
+            pass
     return os.getenv(env_key, default)
 
-MONGO_URI   = _cfg("MONGO_URI",   "MONGO_URI",   "mongodb://mongodb:27017")
+_docker_default_mongo = "" if _IS_CLOUD else "mongodb://mongodb:27017"
+_docker_default_es    = "" if _IS_CLOUD else "http://elasticsearch:9200"
+_docker_default_api   = "" if _IS_CLOUD else "http://api:8000"
+
+MONGO_URI   = _cfg("MONGO_URI",   "MONGO_URI",   _docker_default_mongo)
 MONGO_DB    = _cfg("MONGO_DB",    "MONGO_DB",    "disinformation_db")
-ES_HOST     = _cfg("ES_HOST",     "ES_HOST",     "http://elasticsearch:9200")
-API_BASE    = _cfg("API_BASE",    "API_BASE",    "http://api:8000")
+ES_HOST     = _cfg("ES_HOST",     "ES_HOST",     _docker_default_es)
+API_BASE    = _cfg("API_BASE",    "API_BASE",    _docker_default_api)
 REFRESH_SEC = int(_cfg("REFRESH_SEC", "REFRESH_SEC", "30"))
 
 CLR_FAKE    = "#E74C3C"
@@ -134,10 +151,10 @@ st.markdown("""
 # ── Connexions (cached) ───────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def get_mongo():
-    if not HAS_MONGO:
+    if not HAS_MONGO or not MONGO_URI:
         return None
     try:
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
         client.admin.command('ping')
         return client[MONGO_DB]
     except Exception:
@@ -145,10 +162,10 @@ def get_mongo():
 
 @st.cache_resource(show_spinner=False)
 def get_es():
-    if not HAS_ES:
+    if not HAS_ES or not ES_HOST:
         return None
     try:
-        es = Elasticsearch(ES_HOST, request_timeout=8)
+        es = Elasticsearch(ES_HOST, request_timeout=4)
         if es.ping():
             return es
         return None
@@ -162,16 +179,22 @@ def _backend_ok():
 
 
 # ── Fonctions de données ──────────────────────────────────────────────────────
+@st.cache_data(ttl=20, show_spinner=False)
 def fetch_stats():
+    if not API_BASE:
+        return {}
     try:
-        r = requests.get(f"{API_BASE}/api/v1/stats", timeout=5)
+        r = requests.get(f"{API_BASE}/api/v1/stats", timeout=3)
         return r.json() if r.ok else {}
     except Exception:
         return {}
 
+@st.cache_data(ttl=20, show_spinner=False)
 def fetch_health():
+    if not API_BASE:
+        return {}
     try:
-        r = requests.get(f"{API_BASE}/health", timeout=4)
+        r = requests.get(f"{API_BASE}/health", timeout=3)
         return r.json() if r.ok else {}
     except Exception:
         return {}

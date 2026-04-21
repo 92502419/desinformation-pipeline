@@ -659,7 +659,47 @@
             "mode": "palette-classic"
           },
           "unit": "short"
-        }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "0"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Réel"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2ECC71"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "1"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Fake"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E74C3C"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "pieType": "donut",
@@ -681,38 +721,33 @@
       },
       "targets": [
         {
-          "alias": "Fake",
-          "bucketAggs": [],
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "${DS_ELASTICSEARCH}"
-          },
+          "alias": "{{0}}",
+          "bucketAggs": [
+            {
+              "field": "is_fake",
+              "id": "2",
+              "settings": {
+                "min_doc_count": "1",
+                "order": "desc",
+                "orderBy": "_count",
+                "size": "2"
+              },
+              "type": "terms"
+            }
+          ],
           "metrics": [
             {
               "id": "1",
               "type": "count"
             }
           ],
-          "query": "is_fake:1",
+          "query": "*",
           "refId": "A",
-          "timeField": "processed_at"
-        },
-        {
-          "alias": "Réel",
-          "bucketAggs": [],
+          "timeField": "processed_at",
           "datasource": {
             "type": "elasticsearch",
             "uid": "${DS_ELASTICSEARCH}"
-          },
-          "metrics": [
-            {
-              "id": "1",
-              "type": "count"
-            }
-          ],
-          "query": "is_fake:0",
-          "refId": "B",
-          "timeField": "processed_at"
+          }
         }
       ]
     },
@@ -1200,6 +1235,60 @@
           "timeField": "timestamp"
         }
       ]
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "🚨 Alertes Pipeline",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      }
+    },
+    {
+      "id": 13,
+      "type": "alertlist",
+      "title": "État des Alertes en Temps Réel",
+      "description": "Affiche l'état des règles d'alerte configurées sur le pipeline",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Grafana --"
+      },
+      "options": {
+        "groupBy": [],
+        "groupMode": "default",
+        "maxItems": 20,
+        "sortOrder": 1,
+        "dashboardAlerts": false,
+        "alertName": "",
+        "alertInstanceLabelFilter": "",
+        "stateFilter": {
+          "ok": true,
+          "paused": false,
+          "no_data": true,
+          "execution_error": true,
+          "alerting": true,
+          "pending": true
+        },
+        "showStatusIcon": true,
+        "folder": {
+          "id": 0,
+          "title": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
     }
   ],
   "refresh": "5s",
