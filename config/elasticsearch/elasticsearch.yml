@@ -1,0 +1,24 @@
+# config/elasticsearch/elasticsearch.yml
+# Configuration Elasticsearch pour le pipeline de désinformation
+# Ce fichier est monté dans le container via docker-compose si nécessaire
+# Les paramètres principaux sont définis via les variables d'environnement dans docker-compose.yml
+
+cluster.name: disinformation-cluster
+node.name: es-node-1
+network.host: 0.0.0.0
+http.port: 9200
+
+# Mode nœud unique (développement/recherche)
+discovery.type: single-node
+
+# Sécurité désactivée (pipeline de recherche académique)
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+xpack.security.http.ssl.enabled: false
+xpack.security.transport.ssl.enabled: false
+
+# Mémoire
+bootstrap.memory_lock: true
+
+# Index
+action.auto_create_index: true

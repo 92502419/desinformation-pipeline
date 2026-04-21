@@ -1,0 +1,15 @@
+# config/grafana/provisioning/dashboards/dashboards.yaml
+apiVersion: 1
+
+
+providers:
+  - name: 'Disinformation Monitor'
+    orgId: 1
+    folder: 'Disinformation Monitor'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

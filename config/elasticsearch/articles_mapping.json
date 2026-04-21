@@ -1,0 +1,26 @@
+{
+  "mappings": {
+    "properties": {
+      "id":          { "type": "keyword" },
+      "title":       { "type": "text", "analyzer": "standard",
+                        "fields": { "keyword": { "type": "keyword" } } },
+      "body":        { "type": "text", "analyzer": "standard" },
+      "source":      { "type": "keyword" },
+      "language":    { "type": "keyword" },
+      "is_fake":     { "type": "integer" },
+      "confidence":  { "type": "float" },
+      "p_fake":      { "type": "float" },
+      "drift_score": { "type": "float" },
+      "drift_active":{ "type": "boolean" },
+      "gdelt_tone":  { "type": "float" },
+      "processed_at":{ "type": "date", "format": "strict_date_optional_time" },
+      "timestamp":   { "type": "date", "format": "strict_date_optional_time" }
+    }
+  },
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "1s"
+  }
+}
+

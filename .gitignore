@@ -1,0 +1,69 @@
+# ── Environnements virtuels Python ──────────────────────────────────────
+venv_main/
+venv_spark/
+venv_producer/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Modèles ML lourds (>100 Mo — limites GitHub) ────────────────────────
+models/pretrained/model.safetensors
+models/pretrained/*.bin
+models/onnx/model_quantized.onnx
+models/onnx/*.onnx
+models/checkpoints/*.safetensors
+models/checkpoints/*.bin
+models/checkpoints/*.onnx
+
+# ── Données brutes et traitées (trop volumineuses) ──────────────────────
+data/raw/
+data/processed/
+data/spark-checkpoints/
+
+# ── Logs ────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Docker volumes et artefacts ─────────────────────────────────────────
+docker-volumes/
+
+# ── Fichiers système ────────────────────────────────────────────────────
+.DS_Store
+.env
+*.env.local
+.env.*
+Thumbs.db
+
+# ── Jupyter ─────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Anciens documents (garder uniquement les versions récentes) ─────────
+Documentation_Technique_Pipeline_KOMOSSI_Sosso_v5.docx
+Memoire_Master2_IBDIA_KOMOSSI_Sosso_v3.docx
+
+# ── Packages apt téléchargés ────────────────────────────────────────────
+apt-get/
+
+# ── Fichiers temporaires ─────────────────────────────────────────────────
+*.tmp
+*.bak
+update/
+
+# ── Données internes Docker (BDD, ES, Kafka) ─────────────────────────────
+data/elasticsearch/
+data/mongodb/
+data/kafka/
+data/zookeeper/
+
+# ── Paramètres locaux ────────────────────────────────────────────────────
+.claude/
+
+# ── apt-get cache ────────────────────────────────────────────────────────
+apt-get
+
+# ── Spark checkpoints ────────────────────────────────────────────────────
+data/spark-checkpoints/

@@ -1,0 +1,413 @@
+# docker-compose.yml — Pipeline Big Data Désinformation
+# Version : 2025-optimisé — KOMOSSI Sosso — UCAO-UUT Master 2 BIG DATA IA
+#
+# ARCHITECTURE VOLUMES :
+#   Volumes NOMMÉS (filesystem Linux /var/lib/docker) → bases de données
+#     → MongoDB, Elasticsearch, Kafka, Zookeeper, Grafana
+#     Nécessaire : WiredTiger, Lucene, Kafka utilisent du file-locking POSIX
+#     que NTFS/exFAT (disque externe) ne supporte pas.
+#
+#   Bind-mounts (disque externe) → modèles et code source
+#     → ./models:/app/models (lecture seule, pas de locking)
+#     → ./spark-app/src:/app/src (code source, rechargement sans rebuild)
+#     → ./logs:/app/logs
+#     → ./data/spark-checkpoints:/tmp/spark-checkpoints
+#
+# OPTIMISATIONS MÉMOIRE (machine 11GB RAM) :
+#   - Spark JVM driver : 2g → 1500m  (-512MB)
+#   - Spark trigger    : 2s → 5s     (-60% charge CPU)
+#   - Elasticsearch JVM: 512m → 256m (-256MB)
+#   - Kafka heap       : 512m → 384m (-128MB)
+#   - Total économisé  : ~896MB
+#
+# Usage : docker compose up -d
+
+services:
+
+
+  # ════════════════════════════════════════════════════════
+  # ZOOKEEPER — Coordinateur Kafka
+  # ════════════════════════════════════════════════════════
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_HEAP_OPTS: '-Xms64m -Xmx128m'
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ['CMD', 'nc', '-z', 'localhost', '2181']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  # ════════════════════════════════════════════════════════
+  # KAFKA BROKER
+  # ════════════════════════════════════════════════════════
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - '9092:9092'
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_MESSAGE_MAX_BYTES: 2000000
+      KAFKA_HEAP_OPTS: '-Xms128m -Xmx384m'
+      KAFKA_LOG_SEGMENT_BYTES: 536870912
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    deploy:
+      resources:
+        limits:
+          memory: 640M
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ['CMD', 'kafka-topics', '--list', '--bootstrap-server', 'localhost:29092']
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+
+  # ════════════════════════════════════════════════════════
+  # KAFKA UI (Kafdrop) — Monitoring Kafka
+  # ════════════════════════════════════════════════════════
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    restart: unless-stopped
+    depends_on: [kafka]
+    ports:
+      - '9000:9000'
+    environment:
+      KAFKA_BROKERCONNECT: 'kafka:29092'
+      JVM_OPTS: '-Xms32M -Xmx64M'
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+          cpus: '0.5'
+        reservations:
+          memory: 32M
+
+
+  # ════════════════════════════════════════════════════════
+  # MONGODB — Document store
+  # Volume NOMMÉ obligatoire : WiredTiger nécessite POSIX file-locking
+  # (le disque externe NTFS/exFAT ne supporte pas fcntl LOCK_EX)
+  # ════════════════════════════════════════════════════════
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    restart: unless-stopped
+    command:
+      - mongod
+      - --wiredTigerCacheSizeGB
+      - "0.25"
+      - --setParameter
+      - diagnosticDataCollectionEnabled=false
+      - --bind_ip_all
+    volumes:
+      - mongodb_data:/data/db
+      - ./config/mongodb/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand({ping:1}).ok']
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+
+  # ════════════════════════════════════════════════════════
+  # ELASTICSEARCH
+  # Volume NOMMÉ obligatoire : Lucene nécessite POSIX file-locking
+  # JVM réduit de 512m → 256m (libère 256MB de RAM)
+  # ════════════════════════════════════════════════════════
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms384m -Xmx384m
+      - cluster.name=disinformation-cluster
+      - bootstrap.memory_lock=false
+      - indices.memory.index_buffer_size=10%
+      - thread_pool.write.queue_size=100
+      - thread_pool.search.queue_size=100
+    ports:
+      - '9200:9200'
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '1.5'
+        reservations:
+          memory: 384M
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -sf http://localhost:9200/_cat/health | grep -qE "green|yellow"']
+      interval: 20s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
+
+
+  # ════════════════════════════════════════════════════════
+  # KAFKA INIT — Création explicite des topics au démarrage
+  # ════════════════════════════════════════════════════════
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '-c']
+    command: >
+      "
+      echo 'Création des topics Kafka...' &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw-news-stream --partitions 6 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic classified-news --partitions 6 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic drift-alerts --partitions 1 --replication-factor 1 &&
+      echo 'Topics créés avec succès !'
+      "
+    restart: 'no'
+
+
+  # ════════════════════════════════════════════════════════
+  # ELASTICSEARCH INIT — Création des index
+  # ════════════════════════════════════════════════════════
+  es-init:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+    container_name: es-init
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '-c']
+    command: >
+      "
+      echo 'Création des index Elasticsearch...' &&
+      curl -sf -X PUT http://elasticsearch:9200/articles -H 'Content-Type: application/json' -d '{\"mappings\":{\"properties\":{\"id\":{\"type\":\"keyword\"},\"title\":{\"type\":\"text\",\"analyzer\":\"standard\",\"fields\":{\"keyword\":{\"type\":\"keyword\"}}},\"body\":{\"type\":\"text\",\"analyzer\":\"standard\"},\"source\":{\"type\":\"keyword\"},\"language\":{\"type\":\"keyword\"},\"is_fake\":{\"type\":\"integer\"},\"confidence\":{\"type\":\"float\"},\"p_fake\":{\"type\":\"float\"},\"drift_score\":{\"type\":\"float\"},\"drift_active\":{\"type\":\"boolean\"},\"gdelt_tone\":{\"type\":\"float\"},\"processed_at\":{\"type\":\"date\",\"format\":\"strict_date_optional_time\"},\"timestamp\":{\"type\":\"date\",\"format\":\"strict_date_optional_time\"}}},\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0,\"refresh_interval\":\"1s\"}}' | grep -qE 'acknowledged|already_exists|already exists' &&
+      curl -sf -X PUT http://elasticsearch:9200/drift-events -H 'Content-Type: application/json' -d '{\"mappings\":{\"properties\":{\"timestamp\":{\"type\":\"date\",\"format\":\"strict_date_optional_time\"},\"composite_score\":{\"type\":\"float\"},\"drift_confirmed\":{\"type\":\"boolean\"}}},\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0}}' | grep -qE 'acknowledged|already_exists|already exists' &&
+      echo 'Index Elasticsearch créés !'
+      "
+    restart: 'no'
+
+
+  # ════════════════════════════════════════════════════════
+  # GRAFANA
+  # ════════════════════════════════════════════════════════
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    restart: unless-stopped
+    depends_on: [elasticsearch]
+    ports:
+      - '3000:3000'
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin2025}
+      GF_INSTALL_PLUGINS: marcusolsson-json-datasource
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_DATABASE_WAL: 'true'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+
+
+  # ════════════════════════════════════════════════════════
+  # RSS PRODUCER
+  # ════════════════════════════════════════════════════════
+  rss-producer:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile
+    image: desinformation-pipeline-rss-producer:latest
+    container_name: rss-producer
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+    volumes:
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+
+
+  # ════════════════════════════════════════════════════════
+  # SPARK APPLICATION (Streaming NLP + Concept Drift)
+  # Mode local[2] — driver = executor (tout dans un seul processus JVM)
+  #
+  # Volume ./spark-app/src → code source rechargeable sans rebuild image
+  # Volume ./models → modèles ML (lecture seule depuis disque externe)
+  # Volume ./data/spark-checkpoints → checkpoints Spark (simples fichiers)
+  #
+  # Optimisations mémoire vs version originale :
+  #   - spark.driver.memory : 2g → 1500m  (JVM)
+  #   - Trigger micro-batch : 2s → 5s     (charge CPU divisée par ~2)
+  # ════════════════════════════════════════════════════════
+  spark-app:
+    build:
+      context: ./spark-app
+      dockerfile: Dockerfile
+    container_name: spark-app
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+      MONGO_URI: mongodb://mongodb:27017
+      ES_HOST: http://elasticsearch:9200
+      # HuggingFace offline → utilise uniquement les modèles locaux montés
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+      TOKENIZERS_PARALLELISM: 'false'
+      # Limiter les threads natifs (2 CPU alloués à ce conteneur)
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      # Trigger 5s (override .env qui était à 2s)
+      SPARK_MICRO_BATCH_INTERVAL: '5 seconds'
+    volumes:
+      # Modèles ML depuis le disque externe (lecture seule — pas de locking nécessaire)
+      - ./models:/app/models:ro
+      - ./logs:/app/logs
+      # Checkpoints Spark — simples fichiers séquentiels, pas de locking POSIX
+      - ./data/spark-checkpoints:/tmp/spark-checkpoints
+      # Code source monté en volume → modification sans rebuild de l'image
+      - ./spark-app/src:/app/src
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.5'
+        reservations:
+          memory: 2G
+
+
+  # ════════════════════════════════════════════════════════
+  # STREAMLIT DASHBOARD — Interface interactive
+  # Port 8501 — Toutes les visualisations en un seul endroit
+  # ════════════════════════════════════════════════════════
+  streamlit:
+    build:
+      context: ./streamlit-dashboard
+      dockerfile: Dockerfile
+    container_name: streamlit
+    restart: unless-stopped
+    depends_on: [mongodb, elasticsearch, api]
+    ports:
+      - '8501:8501'
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DB: disinformation_db
+      ES_HOST: http://elasticsearch:9200
+      API_BASE: http://api:8000
+      REFRESH_SEC: '30'
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+
+
+  # ════════════════════════════════════════════════════════
+  # API FASTAPI
+  # ════════════════════════════════════════════════════════
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: desinformation-pipeline-api:latest
+    container_name: api
+    restart: unless-stopped
+    depends_on: [elasticsearch]
+    ports:
+      - '8000:8000'
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+      ES_HOST: http://elasticsearch:9200
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+
+
+# ════════════════════════════════════════════════════════
+# VOLUMES NOMMÉS — stockés dans /var/lib/docker/volumes/ (filesystem Linux ext4)
+# Obligatoire pour : MongoDB (WiredTiger), Elasticsearch (Lucene), Kafka, Zookeeper, Grafana
+# Ces moteurs de stockage utilisent fcntl LOCK_EX (file-locking POSIX)
+# incompatible avec NTFS/exFAT (disque externe).
+# ════════════════════════════════════════════════════════
+volumes:
+  zookeeper_data:
+  zookeeper_log:
+  kafka_data:
+  mongodb_data:
+  elasticsearch_data:
+  grafana_data:
