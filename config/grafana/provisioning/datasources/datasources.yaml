@@ -1,6 +1,5 @@
 # config/grafana/provisioning/datasources/datasources.yaml
-# Compatible Grafana 10.4.x
-# Les uid doivent correspondre exactement aux références du dashboard JSON
+# Compatible Grafana 10.4.x — Elasticsearch 8.14.x
 apiVersion: 1
 
 datasources:
@@ -15,11 +14,11 @@ datasources:
       index: articles
       timeField: processed_at
       esVersion: '8.0.0'
-      interval: Daily
       maxConcurrentShardRequests: 5
       logMessageField: title
       logLevelField: is_fake
       includeFrozen: false
+      xpack: false
 
   # ── Elasticsearch — Événements de Drift ──────────────────────────────────
   - name: Elasticsearch-Drift
@@ -31,7 +30,9 @@ datasources:
       index: drift-events
       timeField: timestamp
       esVersion: '8.0.0'
-      interval: Daily
+      maxConcurrentShardRequests: 5
+      includeFrozen: false
+      xpack: false
 
   # ── API FastAPI (plugin marcusolsson-json-datasource) ─────────────────────
   - name: DisinformationAPI

@@ -1,0 +1,301 @@
+# config/grafana/provisioning/alerting/alerts.yaml
+# Règles d'alerte Grafana 10.4 — Pipeline Désinformation
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: default-notifications
+    receivers:
+      - uid: email-default
+        type: email
+        disableResolveMessage: false
+        settings:
+          addresses: admin@localhost
+          singleEmail: false
+
+muteTimes: []
+
+policies:
+  - orgId: 1
+    receiver: default-notifications
+    group_by: ['grafana_folder', 'alertname']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 1h
+
+groups:
+  - orgId: 1
+    name: Pipeline Disinformation
+    folder: Alertes Pipeline
+    interval: 1m
+
+    rules:
+      # ── Drift détecté (score > 0.5) ───────────────────────────────────────
+      - uid: alert-drift-detecte
+        title: "Concept Drift Détecté (score > 0.5)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: elasticsearch-articles
+            model:
+              alias: "Score Drift Max"
+              bucketAggs: []
+              metrics:
+                - id: "1"
+                  type: max
+                  field: drift_score
+              query: "*"
+              refId: A
+              timeField: processed_at
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params: [0.5]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: ["A"]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: A
+              refId: B
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        annotations:
+          summary: "Dérive conceptuelle détectée dans le pipeline"
+          description: "Le score composite de drift dépasse 0.5 — le modèle adapte son taux d'apprentissage."
+        labels:
+          severity: warning
+          pipeline: disinformation
+
+      # ── Drift confirmé (score > 0.8) ──────────────────────────────────────
+      - uid: alert-drift-confirme
+        title: "Concept Drift Confirmé (score > 0.8)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: elasticsearch-articles
+            model:
+              alias: "Score Drift"
+              bucketAggs: []
+              metrics:
+                - id: "1"
+                  type: max
+                  field: drift_score
+              query: "*"
+              refId: A
+              timeField: processed_at
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params: [0.8]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: ["A"]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: A
+              refId: B
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 1m
+        annotations:
+          summary: "Drift confirmé — mise à jour intensive du modèle activée"
+          description: "Score composite > 0.8. Le modèle passe en mode apprentissage intensif (LR 5e-5)."
+        labels:
+          severity: critical
+          pipeline: disinformation
+
+      # ── Taux de fake élevé (> 70%) ────────────────────────────────────────
+      - uid: alert-high-fake-rate
+        title: "Taux de Désinformation Critique (>70%)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: elasticsearch-articles
+            model:
+              alias: "Fake Rate"
+              bucketAggs: []
+              metrics:
+                - id: "1"
+                  type: avg
+                  field: is_fake
+              query: "*"
+              refId: A
+              timeField: processed_at
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params: [0.7]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: ["A"]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: A
+              refId: B
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "Taux de fake > 70% sur les 5 dernières minutes"
+          description: "Anomalie détectée : plus de 70% des articles sont identifiés comme désinformation."
+        labels:
+          severity: critical
+          pipeline: disinformation
+
+      # ── Taux de fake modéré (> 40%) ───────────────────────────────────────
+      - uid: alert-moderate-fake-rate
+        title: "Taux de Désinformation Élevé (>40%)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: elasticsearch-articles
+            model:
+              alias: "Fake Rate"
+              bucketAggs: []
+              metrics:
+                - id: "1"
+                  type: avg
+                  field: is_fake
+              query: "*"
+              refId: A
+              timeField: processed_at
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params: [0.4]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: ["A"]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: A
+              refId: B
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: "Taux de fake > 40%"
+          description: "Surveillance renforcée recommandée — proportion élevée de désinformation."
+        labels:
+          severity: warning
+          pipeline: disinformation
+
+      # ── Confiance modèle faible (< 70%) ──────────────────────────────────
+      - uid: alert-low-confidence
+        title: "Confiance Modèle Faible (<70%)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: elasticsearch-articles
+            model:
+              alias: "Avg Confidence"
+              bucketAggs: []
+              metrics:
+                - id: "1"
+                  type: avg
+                  field: confidence
+              query: "*"
+              refId: A
+              timeField: processed_at
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: "-100"
+            model:
+              conditions:
+                - evaluator:
+                    params: [0.7]
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params: ["A"]
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: "-100"
+              expression: A
+              refId: B
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: "Confiance moyenne du modèle insuffisante"
+          description: "La confiance moyenne est inférieure à 70%. Le modèle nécessite peut-être un réentraînement."
+        labels:
+          severity: warning
+          pipeline: disinformation
