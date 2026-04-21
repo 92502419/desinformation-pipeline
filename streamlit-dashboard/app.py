@@ -1190,36 +1190,181 @@ elif "Infrastructure" in page:
 
     st.markdown("---")
     st.subheader("🏗️ Architecture du Pipeline")
-    st.code("""
-SOURCES DE DONNÉES
-  📡 RSS Feeds (AFP, BBC, Reuters, Al Jazeera, Jeune Afrique...)
-  🌐 GDELT API (articles géopolitiques multilingues)
-         │ scraping toutes les 60s
-         ▼
-APACHE KAFKA 3.7 (Confluent 7.6.0)
-  📥 raw-news-stream  (6 partitions)
-  📤 classified-news  (6 partitions)
-  🔔 drift-alerts     (1 partition)
-         │ Spark Structured Streaming
-         ▼
-SPARK STREAMING — NLP Pipeline
-  ┌─────────────────┐  ┌──────────────────┐  ┌───────────────────┐
-  │  ONNX Inference │  │  Drift Detection  │  │  Online Learning  │
-  │  DistilBERT INT8│  │  ADWIN+KSWIN+PH   │  │  Reservoir 5000   │
-  │  ~5-6ms/article │  │  Score composite  │  │  PyTorch AdamW    │
-  └─────────────────┘  └──────────────────┘  └───────────────────┘
-         │ bulk write
-    ┌────┴────┐
-    ▼         ▼
-MongoDB 7.0   Elasticsearch 8.14.0
-    └────┬────┘
-         ▼
-COUCHE PRÉSENTATION
-  ⚡ FastAPI   (port 8000) — REST API
-  🎯 Streamlit (port 8501) — Dashboard
-  📈 Grafana   (port 3000) — Métriques
-  📊 Kafdrop   (port 9000) — Kafka UI
-""", language=None)
+    st.markdown("""
+<style>
+.arch-wrapper { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 0 auto; padding: 8px 0; }
+.arch-layer {
+    border-radius: 14px; padding: 16px 20px; margin-bottom: 6px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.10);
+}
+.arch-layer-title {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; opacity: 0.75; margin-bottom: 10px;
+}
+.arch-layer-items { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.arch-item {
+    background: rgba(255,255,255,0.55); border-radius: 10px;
+    padding: 10px 16px; flex: 1; min-width: 160px; max-width: 220px;
+    text-align: center; border: 1px solid rgba(255,255,255,0.9);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.arch-item .icon { font-size: 1.5rem; margin-bottom: 4px; }
+.arch-item .name { font-weight: 700; font-size: 0.88rem; color: #1a1a2e; }
+.arch-item .desc { font-size: 0.72rem; color: #555; margin-top: 2px; }
+.arch-item .badge {
+    display: inline-block; background: rgba(0,0,0,0.10); border-radius: 4px;
+    padding: 1px 7px; font-size: 0.65rem; margin-top: 4px; font-weight: 600;
+}
+.arch-arrow {
+    text-align: center; font-size: 1.4rem; color: #95A5A6;
+    margin: 2px 0; line-height: 1.2;
+}
+.arch-arrow-label {
+    font-size: 0.68rem; color: #7F8C8D; margin-top: -2px; margin-bottom: 2px;
+}
+/* couleurs par couche */
+.layer-sources  { background: linear-gradient(135deg, #EBF5FB, #D6EAF8); border-left: 5px solid #2980B9; }
+.layer-kafka    { background: linear-gradient(135deg, #FDF2E9, #FAD7A0); border-left: 5px solid #E67E22; }
+.layer-spark    { background: linear-gradient(135deg, #E9F7EF, #A9DFBF); border-left: 5px solid #27AE60; }
+.layer-storage  { background: linear-gradient(135deg, #F4ECF7, #D7BDE2); border-left: 5px solid #8E44AD; }
+.layer-present  { background: linear-gradient(135deg, #FDEDEC, #FADBD8); border-left: 5px solid #E74C3C; }
+</style>
+
+<div class="arch-wrapper">
+
+  <!-- SOURCES -->
+  <div class="arch-layer layer-sources">
+    <div class="arch-layer-title">📥 Sources de Données</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="icon">📡</div>
+        <div class="name">RSS Feeds</div>
+        <div class="desc">AFP · BBC · Reuters<br>Al Jazeera · Jeune Afrique</div>
+        <span class="badge">scraping 60s</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">🌐</div>
+        <div class="name">GDELT API</div>
+        <div class="desc">Articles géopolitiques<br>multilingues</div>
+        <span class="badge">temps réel</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch-arrow">↓</div>
+  <div class="arch-arrow-label" style="text-align:center">Kafka Producer</div>
+
+  <!-- KAFKA -->
+  <div class="arch-layer layer-kafka">
+    <div class="arch-layer-title">⚡ Apache Kafka 3.7 — Confluent 7.6.0</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="icon">📥</div>
+        <div class="name">raw-news-stream</div>
+        <div class="desc">Articles bruts entrants</div>
+        <span class="badge">6 partitions</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">📤</div>
+        <div class="name">classified-news</div>
+        <div class="desc">Articles classifiés</div>
+        <span class="badge">6 partitions</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">🔔</div>
+        <div class="name">drift-alerts</div>
+        <div class="desc">Alertes de dérive</div>
+        <span class="badge">1 partition</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch-arrow">↓</div>
+  <div class="arch-arrow-label" style="text-align:center">Spark Structured Streaming</div>
+
+  <!-- SPARK -->
+  <div class="arch-layer layer-spark">
+    <div class="arch-layer-title">🔥 Spark Streaming 3.5.3 — NLP Pipeline</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="icon">🧠</div>
+        <div class="name">ONNX Inference</div>
+        <div class="desc">DistilBERT INT8 quantifié<br>75% compression</div>
+        <span class="badge">~5-6 ms/article</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">📊</div>
+        <div class="name">Drift Detection</div>
+        <div class="desc">ADWIN + KSWIN<br>+ Page-Hinkley</div>
+        <span class="badge">score composite</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">🔄</div>
+        <div class="name">Online Learning</div>
+        <div class="desc">Reservoir 5 000<br>PyTorch AdamW</div>
+        <span class="badge">continual learning</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch-arrow">↓</div>
+  <div class="arch-arrow-label" style="text-align:center">Bulk write</div>
+
+  <!-- STOCKAGE -->
+  <div class="arch-layer layer-storage">
+    <div class="arch-layer-title">🗄️ Stockage</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="icon">🍃</div>
+        <div class="name">MongoDB 7.0</div>
+        <div class="desc">Document store<br>Articles + événements drift</div>
+        <span class="badge">port 27017</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">🔍</div>
+        <div class="name">Elasticsearch 8.14</div>
+        <div class="desc">Full-text search<br>Agrégations temps réel</div>
+        <span class="badge">port 9200</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch-arrow">↓</div>
+  <div class="arch-arrow-label" style="text-align:center">Lecture via API / requêtes directes</div>
+
+  <!-- PRÉSENTATION -->
+  <div class="arch-layer layer-present">
+    <div class="arch-layer-title">🖥️ Couche Présentation</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="icon">⚡</div>
+        <div class="name">FastAPI</div>
+        <div class="desc">API REST — docs Swagger</div>
+        <span class="badge">port 8000</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">🎯</div>
+        <div class="name">Streamlit</div>
+        <div class="desc">Dashboard interactif</div>
+        <span class="badge">port 8501</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">📈</div>
+        <div class="name">Grafana</div>
+        <div class="desc">Métriques & alertes</div>
+        <span class="badge">port 3000</span>
+      </div>
+      <div class="arch-item">
+        <div class="icon">📊</div>
+        <div class="name">Kafdrop</div>
+        <div class="desc">Interface Kafka UI</div>
+        <span class="badge">port 9000</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+""", unsafe_allow_html=True)
 
     st.markdown("---")
     st.subheader("💾 Allocation Mémoire")
