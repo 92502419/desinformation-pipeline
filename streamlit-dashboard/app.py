@@ -8,6 +8,20 @@ import os, time, socket, requests
 from datetime import datetime, timezone
 
 import streamlit as st
+
+# set_page_config DOIT être le tout premier appel Streamlit du script
+st.set_page_config(
+    page_title="Surveillance Désinformation",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        "Get Help": None,
+        "Report a bug": None,
+        "About": "Pipeline Big Data Désinformation — KOMOSSI Sosso, Master BIG DATA IA, UCAO UUT"
+    }
+)
+
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -29,9 +43,12 @@ except ImportError:
 # ── Configuration (st.secrets → env vars → défaut) ───────────────────────────
 def _cfg(secret_key, env_key, default):
     try:
-        return st.secrets[secret_key]
+        val = st.secrets.get(secret_key)
+        if val is not None:
+            return str(val)
     except Exception:
-        return os.getenv(env_key, default)
+        pass
+    return os.getenv(env_key, default)
 
 MONGO_URI   = _cfg("MONGO_URI",   "MONGO_URI",   "mongodb://mongodb:27017")
 MONGO_DB    = _cfg("MONGO_DB",    "MONGO_DB",    "disinformation_db")
@@ -54,18 +71,6 @@ DEFAULT_THRESHOLDS = {
     "conf_low":          0.70,
     "silence_minutes":   15,
 }
-
-st.set_page_config(
-    page_title="Surveillance Désinformation",
-    page_icon="🔍",
-    layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items={
-        "Get Help": None,
-        "Report a bug": None,
-        "About": "Pipeline Big Data Désinformation — KOMOSSI Sosso, Master BIG DATA IA, UCAO UUT"
-    }
-)
 
 st.markdown("""
 <style>

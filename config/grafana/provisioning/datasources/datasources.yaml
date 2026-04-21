@@ -4,6 +4,7 @@ apiVersion: 1
 
 datasources:
   # ── Elasticsearch — Articles classifiés ──────────────────────────────────
+  # interval retiré : l'index s'appelle "articles" (pas de suffixe date)
   - name: Elasticsearch
     uid: elasticsearch-articles
     type: elasticsearch
@@ -18,9 +19,9 @@ datasources:
       logMessageField: title
       logLevelField: is_fake
       includeFrozen: false
-      xpack: false
 
   # ── Elasticsearch — Événements de Drift ──────────────────────────────────
+  # interval: Daily conservé car l'index drift-events utilise le pattern date
   - name: Elasticsearch-Drift
     uid: elasticsearch-drift
     type: elasticsearch
@@ -30,9 +31,9 @@ datasources:
       index: drift-events
       timeField: timestamp
       esVersion: '8.0.0'
+      interval: Daily
       maxConcurrentShardRequests: 5
       includeFrozen: false
-      xpack: false
 
   # ── API FastAPI (plugin marcusolsson-json-datasource) ─────────────────────
   - name: DisinformationAPI
