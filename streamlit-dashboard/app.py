@@ -282,15 +282,17 @@ def save_alert_event(alert_doc):
         pass
 
 def check_services():
+    # Depuis l'intérieur du conteneur Docker, on utilise les noms de service
+    # internes au réseau Docker (pas localhost qui pointe sur le conteneur Streamlit lui-même)
     targets = {
-        "Zookeeper":     ("localhost", 2181),
-        "Kafka":         ("localhost", 9092),
-        "MongoDB":       ("localhost", 27017),
-        "Elasticsearch": ("localhost", 9200),
-        "FastAPI":       ("localhost", 8000),
-        "Kafdrop":       ("localhost", 9000),
-        "Grafana":       ("localhost", 3000),
-        "Streamlit":     ("localhost", 8501),
+        "Zookeeper":     ("zookeeper",     2181),
+        "Kafka":         ("kafka",         29092),
+        "MongoDB":       ("mongodb",       27017),
+        "Elasticsearch": ("elasticsearch", 9200),
+        "FastAPI":       ("api",           8000),
+        "Kafdrop":       ("kafdrop",       9000),
+        "Grafana":       ("grafana",       3000),
+        "Streamlit":     ("localhost",     8501),
     }
     results = {}
     for name, (host, port) in targets.items():
@@ -1144,6 +1146,13 @@ elif "Alertes" in page:
 # ═════════════════════════════════════════════════════════════════════════════
 elif "Infrastructure" in page:
     section_header("⚙️", "État de l'Infrastructure Docker")
+
+    col_hdr, col_btn = st.columns([4, 1])
+    with col_btn:
+        if st.button("🔄 Reconnecter", use_container_width=True):
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            st.rerun()
 
     services_status = check_services()
     n_up = sum(services_status.values())

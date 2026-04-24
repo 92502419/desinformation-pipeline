@@ -45,6 +45,10 @@ Thumbs.db
 Documentation_Technique_Pipeline_KOMOSSI_Sosso_v5.docx
 Memoire_Master2_IBDIA_KOMOSSI_Sosso_v3.docx
 
+# ── Documents et scripts de présentation (usage local uniquement) ────────
+Guide_Presentation_Soutenance_KOMOSSI_Sosso.docx
+scripts/generate_presentation_guide.py
+
 # ── Packages apt téléchargés ────────────────────────────────────────────
 apt-get/
 

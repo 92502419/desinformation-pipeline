@@ -88,7 +88,23 @@ sudo sysctl -w vm.max_map_count=262144
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
 ```
 
-### 2. Lancer le pipeline
+### 2. Vérifier les modèles ML
+
+Les modèles doivent être présents **avant** de lancer Docker :
+
+```bash
+# Modèle ONNX quantifié (requis par spark-app)
+ls models/onnx/model_quantized.onnx
+
+# Modèle DistilBERT fine-tuné (requis par spark-app)
+ls models/pretrained/config.json
+
+# Si les dossiers sont vides → les modèles doivent être générés d'abord :
+# python scripts/train_model.py   (fine-tuning DistilBERT)
+# python scripts/export_onnx.py   (export ONNX INT8)
+```
+
+### 3. Lancer le pipeline
 
 ```bash
 # Aller dans le répertoire du projet
@@ -97,14 +113,30 @@ cd ~/desinformation-pipeline   # adapter selon votre chemin
 # Démarrer tous les services
 docker compose up -d
 
-# Vérifier que tout est UP
-docker compose ps
-
-# Vérifier la santé de l'API
-curl http://localhost:8000/health
+# Suivre le démarrage en temps réel (Ctrl+C pour quitter le suivi)
+docker compose ps --watch
+# ou : watch -n 3 docker compose ps
 ```
 
-### 3. Accéder aux interfaces
+> ⏱️ **Temps de démarrage complet : 3 à 5 minutes**
+>
+> Les services démarrent dans cet ordre avec des délais d'attente obligatoires :
+> 1. **Zookeeper** (~10s) → **MongoDB** (~30s) → **Elasticsearch** (~60-120s)
+> 2. **Kafka** (attend Zookeeper healthy) → **kafka-init** (crée les topics)
+> 3. **API FastAPI** (attend MongoDB + Elasticsearch healthy)
+> 4. **Streamlit** (attend API + MongoDB + Elasticsearch healthy)
+> 5. **Spark-app** + **rss-producer** (attendent Kafka + MongoDB + Elasticsearch)
+>
+> Tant que `docker compose ps` affiche des services en `starting` ou `(health: starting)`,
+> les interfaces ne sont **pas encore accessibles**. C'est normal.
+
+```bash
+# Attendre que tout soit stable, puis vérifier la santé de l'API
+curl http://localhost:8000/health
+# Réponse attendue : {"status":"ok","mongo":"up","elasticsearch":"up"}
+```
+
+### 4. Accéder aux interfaces
 
 | Interface | URL | Identifiants |
 |-----------|-----|--------------|
@@ -115,8 +147,13 @@ curl http://localhost:8000/health
 | Elasticsearch (API REST) | http://localhost:9200 | — |
 
 > **Streamlit (port 8501)** est l'interface principale du projet. Elle regroupe
-> 6 pages interactives : Tableau de bord temps réel, Articles classifiés,
-> Recherche full-text, Monitoring du Drift, Etat de l'infrastructure, A propos.
+> 7 pages interactives : Tableau de bord, Articles temps réel, Recherche & Analyse,
+> Drift & Apprentissage, Alertes, Infrastructure, À propos.
+
+> **Grafana — alertes** : les règles d'alerte sont pré-configurées automatiquement.
+> Elles apparaissent en état **"NoData"** tant qu'Elasticsearch ne contient pas encore
+> de données (pipeline pas encore démarré). Dès que `spark-app` traite les premiers
+> articles (~2 min après le démarrage complet), les alertes passent en évaluation normale.
 
 ---
 
@@ -129,14 +166,25 @@ Pour un premier démarrage propre ou après un problème :
 docker compose up -d zookeeper mongodb elasticsearch
 
 # Attendre que MongoDB et Elasticsearch soient healthy (30-120s)
-watch docker compose ps
+# Le statut "(healthy)" doit apparaître dans la colonne STATUS
+watch -n 5 docker compose ps
 
 # Étape 2 — Kafka
 docker compose up -d kafka
 
+# Attendre que Kafka soit healthy (~30s)
+watch -n 5 docker compose ps
+
 # Étape 3 — Tous les autres services
 docker compose up -d
+
+# Suivre les logs du pipeline Spark
+docker compose logs -f spark-app
 ```
+
+> ⚠️ **Si Streamlit affiche "backends indisponibles"** après le démarrage complet :
+> aller sur la page **Infrastructure** et cliquer sur **"🔄 Reconnecter"**.
+> Cela vide le cache des connexions et force une reconnexion.
 
 ---
 
@@ -193,6 +241,25 @@ xdg-open http://localhost:8501
 
 ## Dépannage (Troubleshooting)
 
+### Streamlit affiche "backends indisponibles" ou aucun article
+
+Le message apparaît si Streamlit a tenté de se connecter avant que MongoDB/API soient prêts.
+La connexion échouée est mise en cache.
+
+**Solution :** ouvrir http://localhost:8501, aller sur la page **⚙️ Infrastructure**,
+puis cliquer sur **"🔄 Reconnecter"**. Cela vide le cache et force une reconnexion.
+
+### La page Infrastructure affiche tous les services DOWN sauf Streamlit
+
+**Cause :** bug corrigé — la vérification utilisait `localhost` depuis l'intérieur
+du conteneur Docker. `localhost` dans Docker = le conteneur lui-même, donc seul
+Streamlit (qui tourne dans ce conteneur) était détecté UP.
+**Solution :** reconstruire l'image Streamlit après la correction :
+```bash
+docker compose build streamlit
+docker compose up -d streamlit
+```
+
 ### MongoDB ne démarre pas
 
 ```bash
@@ -233,17 +300,30 @@ ES_JAVA_OPTS: -Xms384m -Xmx384m
 memory: 768M
 ```
 
+### Les alertes Grafana affichent "NoData"
+
+C'est **normal** au démarrage. Grafana évalue les règles sur les données Elasticsearch.
+Tant qu'aucun article n'a été traité par Spark, l'index `articles` est vide → NoData.
+Les alertes passent en mode évaluation normale dès que les premiers articles arrivent (~2-5 min après démarrage complet).
+
+Pour vérifier si des données arrivent :
+```bash
+curl http://localhost:9200/articles/_count
+# Réponse attendue après démarrage : {"count":X,...} avec X > 0
+```
+
 ### Relancer proprement
 
 ```bash
 # Arrêter tout
 docker compose down
 
-# Redémarrer
+# Redémarrer (attendre 3-5 min pour le démarrage complet)
 docker compose up -d
 
 # Suivre les logs
 docker compose logs -f spark-app
+docker compose logs -f rss-producer
 ```
 
 ---
