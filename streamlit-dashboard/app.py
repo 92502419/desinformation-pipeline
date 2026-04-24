@@ -993,6 +993,75 @@ elif "Drift" in page:
         **Sync ONNX** : tous les 100 batches
         """)
 
+    # ── Panneau de simulation de dérive ──────────────────────────────────────
+    st.markdown("---")
+    st.subheader("🔥 Simuler un Concept Drift")
+    st.markdown(
+        "Injecte des articles simulés dans le flux Kafka pour déclencher "
+        "la détection de dérive et observer la réaction du tri-détecteur en temps réel."
+    )
+    sim_col1, sim_col2, sim_col3 = st.columns([2, 1, 1])
+    with sim_col1:
+        scenario_labels = {
+            "B — Graduel (recommandé)":     "B",
+            "A — Abrupt":                   "A",
+            "C — Cyclique":                 "C",
+            "D — Incrémental":              "D",
+        }
+        scenario_choice = st.selectbox(
+            "Scénario",
+            list(scenario_labels.keys()),
+            index=0,
+            help="B=50%→90% progressif | A=bloc abrupt | C=pics répétés | D=montée lente"
+        )
+    with sim_col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        inject_btn = st.button("🚀 Lancer la simulation", use_container_width=True, type="primary")
+    with sim_col3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(
+            f'<a href="{API_BASE}/docs#/drift/inject_drift_api_v1_drift_inject_post" '
+            f'target="_blank" style="text-decoration:none;">'
+            f'<button style="width:100%;padding:8px;border-radius:6px;'
+            f'background:#3498DB;color:white;border:none;cursor:pointer;">📖 API Docs</button>'
+            f'</a>',
+            unsafe_allow_html=True
+        )
+
+    if inject_btn and API_BASE:
+        scenario_code = scenario_labels[scenario_choice]
+        try:
+            with st.spinner(f"Injection du scénario {scenario_code} en cours..."):
+                resp = requests.post(
+                    f"{API_BASE}/api/v1/drift/inject",
+                    params={"scenario": scenario_code},
+                    timeout=10
+                )
+            if resp.ok:
+                data = resp.json()
+                st.success(
+                    f"✅ **{data.get('message', 'Simulation lancée !')}**  \n"
+                    f"Scénario **{data.get('scenario')}** injecté en arrière-plan. "
+                    f"Résultats visibles dans Grafana et ci-dessus dans ~2 minutes."
+                )
+                st.info("💡 Active le **rafraîchissement auto** (barre latérale) pour suivre l'évolution en temps réel.")
+            else:
+                st.error(f"Erreur API ({resp.status_code}) : {resp.text[:200]}")
+        except Exception as e:
+            st.error(f"Connexion à l'API impossible : {e}")
+    elif inject_btn and not API_BASE:
+        st.warning("API non disponible — pipeline Docker non démarré.")
+
+    st.markdown("""
+    <div style="background:#F8F9FA;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.85rem;">
+    <b>Description des scénarios :</b><br>
+    🔶 <b>B — Graduel</b> : taux fake monte de 50% → 90% sur 120 articles (~5 min) — scénario recommandé pour la soutenance<br>
+    🔴 <b>A — Abrupt</b> : 30 articles normaux puis bloc de 80 articles à 90% fake — ADWIN détecte en &lt; 10 messages<br>
+    🔁 <b>C — Cyclique</b> : 3 pics fake/réel alternés — simule une campagne récurrente<br>
+    📉 <b>D — Incrémental</b> : montée très lente 30% → 90% sur 200 articles — KSWIN excelle sur ce scénario
+    </div>
+    """, unsafe_allow_html=True)
+
     if auto_refresh:
         time.sleep(refresh_interval)
         st.rerun()

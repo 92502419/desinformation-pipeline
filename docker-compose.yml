@@ -399,8 +399,11 @@ services:
     environment:
       MONGO_URI: mongodb://mongodb:27017
       ES_HOST: http://elasticsearch:9200
+      KAFKA_BROKER: kafka:29092
+    volumes:
+      - ./scripts:/app/scripts:ro
     healthcheck:
-      test: ['CMD-SHELL', 'curl -sf http://localhost:8000/health | grep -q "ok\|up\|healthy" || exit 1']
+      test: ['CMD-SHELL', 'python3 -c "import urllib.request; r=urllib.request.urlopen(\"http://localhost:8000/health\"); exit(0 if r.status==200 else 1)" 2>/dev/null || exit 1']
       interval: 15s
       timeout: 5s
       retries: 5
@@ -415,20 +418,21 @@ services:
 
 
   # ════════════════════════════════════════════════════════
-  # DRIFT INJECTOR — Outil de simulation de Concept Drift
-  # Utilisé uniquement à la demande (profil "tools")
+  # DRIFT INJECTOR — Service de simulation de Concept Drift
+  # Démarre automatiquement avec docker compose up -d
   #
-  # Lancer depuis l'hôte :
-  #   docker compose run --rm drift-injector --scenario B
+  # Mode daemon : attend 90s au démarrage (pipeline warm-up),
+  # puis injecte le scénario B toutes les 15 minutes.
   #
-  # Scénarios disponibles : A (abrupt), B (graduel), C (cyclique), D (incrémental)
+  # Exécution manuelle one-shot depuis l'hôte :
+  #   python scripts/inject_drift_simulation.py --scenario B
   # ════════════════════════════════════════════════════════
   drift-injector:
     build:
       context: ./producer
       dockerfile: Dockerfile
     container_name: drift-injector
-    profiles: ["tools"]
+    restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
@@ -438,12 +442,16 @@ services:
       KAFKA_TOPIC_RAW: raw-news-stream
     volumes:
       - ./scripts:/app/scripts:ro
-    entrypoint: ["python", "/app/scripts/inject_drift_simulation.py"]
+    entrypoint: ["python", "/app/scripts/inject_drift_simulation.py",
+                 "--daemon", "--scenario", "B",
+                 "--initial-delay", "90", "--interval", "900"]
     deploy:
       resources:
         limits:
           memory: 128M
           cpus: '0.5'
+        reservations:
+          memory: 32M
 
 
 # ════════════════════════════════════════════════════════

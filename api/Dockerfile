@@ -12,9 +12,11 @@ RUN pip install --no-cache-dir \
     pymongo==4.9.1 \
     elasticsearch==8.15.0 \
     python-dotenv==1.0.1 \
-    pydantic==2.9.2
+    pydantic==2.9.2 \
+    confluent-kafka==2.5.0
 
 COPY src/ ./src/
+# scripts/ est monté en volume depuis la racine du projet (voir docker-compose.yml)
 
 # Démarrage depuis /app (src.main:app) : sys.path inclut /app,
 # et main.py ajoute /app/src via sys.path.insert pour les imports de routers

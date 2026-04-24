@@ -1,6 +1,6 @@
 # Pipeline Big Data de Monitoring de la Désinformation en Temps Réel
 
-**Auteur :** KOMOSSI Sosso — Master 2 IBDIA, UCAO-UUT  
+**Auteur :** KOMOSSI Sosso — Master 2 BIG DATA IA, UCAO-UUT  
 **Encadrants :** M. TCHANTCHO Leri & M. BABA Kpatcha  
 **Année :** 2025-2026
 
