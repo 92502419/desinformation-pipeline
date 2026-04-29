@@ -1,6 +1,6 @@
 # api/src/routers/web_search.py — Recherche web + classification ML en temps réel
 # Flux : DuckDuckGo News → ONNX (inférence directe) → MongoDB + Kafka (apprentissage)
-import os, uuid, json, logging
+import os, uuid, json, logging, time
 from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime, timezone
 from pymongo import MongoClient
@@ -14,6 +14,25 @@ KAFKA_TOPIC   = os.getenv("KAFKA_TOPIC_RAW", "raw-news-stream")
 MONGO_URI     = os.getenv("MONGO_URI", "mongodb://mongodb:27017")
 MONGO_DB      = os.getenv("MONGO_DB", "disinformation_db")
 ONNX_DIR      = os.getenv("ONNX_MODEL_DIR", "/app/models/onnx")
+
+# ── Cache in-memory (5 min TTL) — évite les rate-limits DuckDuckGo ──────────
+_CACHE_TTL    = 300  # secondes
+_search_cache: dict = {}   # { query_key: (timestamp, results) }
+
+def _cache_get(key: str):
+    if key in _search_cache:
+        ts, data = _search_cache[key]
+        if time.time() - ts < _CACHE_TTL:
+            return data
+        del _search_cache[key]
+    return None
+
+def _cache_set(key: str, data):
+    # Garder max 50 entrées en mémoire
+    if len(_search_cache) >= 50:
+        oldest = min(_search_cache, key=lambda k: _search_cache[k][0])
+        del _search_cache[oldest]
+    _search_cache[key] = (time.time(), data)
 
 # ── Chargement lazy du modèle ONNX (une seule fois au premier appel) ─────────
 _ort_session  = None
@@ -121,6 +140,50 @@ def _save_to_mongo(articles: list):
         client.close()
 
 
+_DDG_RETRY_DELAYS  = [5, 20, 45]  # secondes entre tentatives
+_DDG_MIN_INTERVAL  = 4.0           # délai minimum entre deux requêtes DuckDuckGo
+_ddg_last_call_ts  = 0.0           # timestamp du dernier appel réussi
+
+def _ddg_search(q: str, limit: int) -> list:
+    """Recherche DuckDuckGo News avec délai minimum + 3 tentatives backoff."""
+    global _ddg_last_call_ts
+    from duckduckgo_search import DDGS
+
+    # Respecter l'intervalle minimum entre requêtes successives
+    wait = _DDG_MIN_INTERVAL - (time.time() - _ddg_last_call_ts)
+    if wait > 0:
+        log.info("[web-search] Délai anti-ratelimit : %.1fs", wait)
+        time.sleep(wait)
+
+    last_exc = None
+    for attempt, delay in enumerate([0] + _DDG_RETRY_DELAYS):
+        if delay:
+            log.info("[web-search] Rate-limit DuckDuckGo, attente %ds (tentative %d/4)…", delay, attempt + 1)
+            time.sleep(delay)
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.news(
+                    keywords=q,
+                    max_results=limit,
+                    region="wt-wt",
+                    safesearch="off",
+                ))
+            _ddg_last_call_ts = time.time()
+            return results
+        except Exception as e:
+            last_exc = e
+            err_str = str(e).lower()
+            is_ratelimit = "ratelimit" in err_str or "429" in err_str or "403" in err_str
+            if not is_ratelimit:
+                raise HTTPException(502, f"Erreur recherche internet : {str(e)}")
+            log.warning("[web-search] Rate-limit DuckDuckGo (tentative %d/4) : %s", attempt + 1, e)
+    raise HTTPException(
+        429,
+        "DuckDuckGo a temporairement limité les requêtes. Attendez 2-3 minutes et réessayez. "
+        "Conseil : évitez de lancer plusieurs recherches à la suite très rapidement."
+    )
+
+
 @router.get("/web")
 def web_search(
     q: str    = Query(..., description="Terme à rechercher sur internet"),
@@ -133,20 +196,14 @@ def web_search(
 
     Les articles sont aussi envoyés à Kafka pour l'apprentissage continu de Spark.
     """
-    # ── 1. Recherche DuckDuckGo News ─────────────────────────────────────────
-    try:
-        from duckduckgo_search import DDGS
-        with DDGS() as ddgs:
-            raw_results = list(ddgs.news(
-                keywords=q,
-                max_results=limit,
-                region="wt-wt",
-                safesearch="off",
-            ))
-    except ImportError:
-        raise HTTPException(503, "Module duckduckgo-search non installé dans le conteneur API")
-    except Exception as e:
-        raise HTTPException(502, f"Erreur lors de la recherche internet : {str(e)}")
+    # ── 1. Cache ou DuckDuckGo News (3 tentatives avec backoff) ─────────────
+    cache_key = f"{q.strip().lower()}:{limit}"
+    cached = _cache_get(cache_key)
+    if cached:
+        log.info("[web-search] Cache hit pour «%s»", q)
+        return {**cached, "cached": True}
+
+    raw_results = _ddg_search(q, limit)
 
     if not raw_results:
         return {
@@ -202,19 +259,22 @@ def web_search(
     n_fake = sum(1 for a in classified_articles if a.get("is_fake") == 1)
     n_real = sum(1 for a in classified_articles if a.get("is_fake") == 0)
 
-    return {
+    response = {
         "query":        q,
         "total_found":  len(raw_results),
         "classified":   len([a for a in classified_articles if a.get("status") == "classified"]),
         "fake_count":   n_fake,
         "real_count":   n_real,
         "articles":     classified_articles,
+        "cached":       False,
         "message": (
             f"{len(classified_articles)}/{len(raw_results)} articles classifiés en temps réel. "
             f"Désinformation détectée : {n_fake} | Fiables : {n_real}. "
             f"Intégrés à l'apprentissage continu du modèle."
         ),
     }
+    _cache_set(cache_key, response)
+    return response
 
 
 @router.get("/web/sources")

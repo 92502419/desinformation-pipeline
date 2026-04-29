@@ -817,27 +817,49 @@ elif "Recherche" in page:
             status_area  = st.empty()
 
             try:
-                status_area.info("📡 Interrogation de DuckDuckGo News…")
+                status_area.info("📡 Interrogation de DuckDuckGo News… (jusqu'à 30s si beaucoup de requêtes)")
                 progress_bar.progress(20, text="Récupération des articles…")
 
                 resp = requests.get(
                     f"{API_BASE}/api/v1/search/web",
                     params={"q": web_query, "limit": web_limit},
-                    timeout=30
+                    timeout=60   # 3 retries × (3+8+15)s = 26s max côté API
                 )
 
-                if resp.status_code != 200:
+                if resp.status_code == 429:
                     progress_bar.empty()
-                    status_area.error(f"Erreur API : {resp.status_code} — {resp.text[:200]}")
+                    status_area.warning(
+                        "⏳ **DuckDuckGo a temporairement bloqué les requêtes** — "
+                        "l'API a déjà réessayé 3 fois automatiquement. "
+                        "Attendez **2-3 minutes** puis relancez la recherche.\n\n"
+                        "_Conseil : évitez d'enchaîner plusieurs recherches trop vite._"
+                    )
+                elif resp.status_code != 200:
+                    progress_bar.empty()
+                    try:
+                        detail = resp.json().get("detail", resp.text[:200])
+                    except Exception:
+                        detail = resp.text[:200]
+                    if any(x in str(detail).lower() for x in ["403", "ratelimit", "rate limit"]):
+                        status_area.warning(
+                            "⏳ **DuckDuckGo a bloqué la requête (rate limit)**. "
+                            "Attendez **2-3 minutes** et réessayez."
+                        )
+                    else:
+                        status_area.error(f"Erreur API {resp.status_code} — {detail}")
                 else:
                     data = resp.json()
                     articles_web = data.get("articles", [])
                     total_found  = data.get("total_found", 0)
                     n_classified = data.get("classified", 0)
                     n_pending    = data.get("pending", 0)
+                    is_cached    = data.get("cached", False)
 
                     progress_bar.progress(80, text="Classification en cours…")
-                    status_area.empty()
+                    if is_cached:
+                        status_area.info("⚡ Résultats depuis le cache (moins de 5 min) — DuckDuckGo non ré-interrogé.")
+                    else:
+                        status_area.empty()
 
                     if not articles_web:
                         progress_bar.empty()
@@ -936,7 +958,7 @@ elif "Recherche" in page:
                             )
             except requests.exceptions.Timeout:
                 progress_bar.empty()
-                st.error("⏱️ Délai dépassé — l'API met trop de temps à répondre. Réessayez.")
+                st.warning("⏳ **Délai dépassé** — DuckDuckGo est lent en ce moment. Attendez 30 secondes et réessayez.")
             except Exception as e:
                 progress_bar.empty()
                 st.error(f"Erreur : {e}")
