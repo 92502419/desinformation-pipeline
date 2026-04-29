@@ -1,5 +1,5 @@
 # Pipeline Big Data de Monitoring de la Désinformation en Temps Réel
-### Version 2.0 — Afrique subsaharienne & déploiement mondial
+### Version 2.1 — Afrique subsaharienne & déploiement mondial
 
 **Auteur :** KOMOSSI Sosso — Master 2 BIG DATA IA, UCAO-UUT  
 **Encadrants :** M. TCHANTCHO Leri & M. BABA Kpatcha  
@@ -208,7 +208,12 @@ GET /api/v1/articles/search?q=<terme>   — Recherche full-text (Elasticsearch)
 GET /api/v1/articles/virality?hours=24  — Tendance horaire du taux de fake
 GET /api/v1/drift/events                — Historique des alertes de drift
 GET /api/v1/drift/stats                 — Statistiques agrégées drift
+GET /api/v1/search/web?q=<terme>        — Recherche internet (DuckDuckGo) + classification ONNX immédiate
+GET /api/v1/search/web/sources          — Liste des sources indexées dans MongoDB
 ```
+
+> **v2.1** : `GET /api/v1/search/web` — inférence ONNX directe dans l'API (< 10 ms/article),
+> sans attendre Spark. Les articles sont aussi publiés sur Kafka pour l'apprentissage continu.
 
 ---
 
@@ -220,7 +225,7 @@ L'interface Streamlit est construite avec **7 pages** accessibles via la barre l
 |------|---------|
 | **Tableau de bord** | KPIs en temps réel, répartition fake/réel, tendance horaire, derniers articles |
 | **Articles** | Liste filtrée par statut/source, histogramme de confiance, cartes détaillées |
-| **Recherche** | Recherche full-text Elasticsearch, scatter plot de pertinence |
+| **Recherche** | **Web en direct** (DuckDuckGo → ONNX instantané) + **Base de données** (Elasticsearch full-text) |
 | **Drift & Apprentissage** | Timeline des alertes de dérive, formule composite, statistiques ADWIN/KSWIN/PH |
 | **Alertes** | Alertes actives (fake rate, drift, confiance modèle) avec niveaux de criticité |
 | **Infrastructure** | État santé des services Docker, liens d'accès, diagramme d'architecture |
