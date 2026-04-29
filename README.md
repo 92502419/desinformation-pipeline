@@ -1,8 +1,12 @@
 # Pipeline Big Data de Monitoring de la Désinformation en Temps Réel
+### Version 2.0 — Afrique subsaharienne & déploiement mondial
 
 **Auteur :** KOMOSSI Sosso — Master 2 BIG DATA IA, UCAO-UUT  
 **Encadrants :** M. TCHANTCHO Leri & M. BABA Kpatcha  
 **Année :** 2025-2026
+
+> **Contexte** : système de surveillance de la désinformation conçu pour l'Afrique
+> subsaharienne (AFP Afrique, RFI, Jeune Afrique, Al Jazeera…), exportable mondialement.
 
 ---
 
@@ -25,11 +29,12 @@
 ┌─────────────────────────────────────────────────────────────────────────┐
 │          SPARK STREAMING (local[2]) — Continual-DistilBERT              │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
-│  │  ONNX INT8 Infer │  │  Tri-Détecteur   │  │  Online Learning      │  │
+│  │  ONNX INT8 Infer │  │  Tri-Détecteur   │  │  Online Learning v2   │  │
 │  │  ~5-6 ms/article │  │  ADWIN(0.45)     │  │  PyTorch AdamW        │  │
-│  │  DistilBERT-ml   │  │  KSWIN(0.35)     │  │  Reservoir 5000       │  │
+│  │  DistilBERT-ml   │  │  KSWIN(0.35)     │  │  Reservoir 50/50      │  │
 │  │                  │  │  PageHinkley(0.20│  │  ONNX sync/100 batch  │  │
 │  └──────────────────┘  └──────────────────┘  └───────────────────────┘  │
+│  Spark UI disponible sur :4040 pour monitoring des micro-batchs         │
 └──────────────────────────┬──────────────────────────────────────────────┘
                            │ bulk write
                ┌───────────┴───────────┐
@@ -44,9 +49,9 @@
 │                    COUCHE PRÉSENTATION                                   │
 │                                                                          │
 │  [Streamlit Dashboard :8501]  [FastAPI REST :8000]  [Grafana :3000]      │
-│  [Kafdrop Kafka UI   :9000]   [Elasticsearch  :9200]                     │
+│  [Kafdrop Kafka UI   :9000]   [Elasticsearch  :9200] [Spark UI :4040]    │
 │                                                                          │
-│  --> Streamlit = interface principale (6 pages interactives)             │
+│  --> Streamlit = interface principale (7 pages interactives)             │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -56,12 +61,15 @@
 
 | Ressource | Minimum | Recommandé |
 |-----------|---------|------------|
-| RAM | 11 GB | 16 GB |
+| RAM | 8 GB | 12 GB |
 | CPU | 4 cœurs | 8 cœurs |
 | Disque | 30 GB libre | 50 GB |
 | OS | Ubuntu 22.04+ | Ubuntu 24.04 |
 | Docker | 26.1+ | 29.1+ |
 | Docker Compose | Plugin v2 | Plugin v2 |
+
+> **Optimisation v2.0** : la consommation mémoire a été réduite de ~2.3 GB.
+> Sur une machine de 12 GB, Firefox reste utilisable pendant l'exécution du pipeline.
 
 > ⚠️ **Important** : Les bases de données (MongoDB, Elasticsearch, Kafka) doivent
 > être sur un **filesystem Linux** (ext4/xfs). Un disque externe NTFS/exFAT n'est
@@ -145,6 +153,7 @@ curl http://localhost:8000/health
 | Grafana (métriques & dashboards) | http://localhost:3000 | admin / admin2025 |
 | Kafdrop (monitoring Kafka) | http://localhost:9000 | — |
 | Elasticsearch (API REST) | http://localhost:9200 | — |
+| **Spark UI** (monitoring jobs Spark) | http://localhost:4040 | — |
 
 > **Streamlit (port 8501)** est l'interface principale du projet. Elle regroupe
 > 7 pages interactives : Tableau de bord, Articles temps réel, Recherche & Analyse,
@@ -205,16 +214,17 @@ GET /api/v1/drift/stats                 — Statistiques agrégées drift
 
 ## Dashboard Streamlit (port 8501)
 
-L'interface Streamlit est construite avec 6 pages accessibles via la barre latérale :
+L'interface Streamlit est construite avec **7 pages** accessibles via la barre latérale :
 
 | Page | Contenu |
 |------|---------|
 | **Tableau de bord** | KPIs en temps réel, répartition fake/réel, tendance horaire, derniers articles |
 | **Articles** | Liste filtrée par statut/source, histogramme de confiance, cartes détaillées |
 | **Recherche** | Recherche full-text Elasticsearch, scatter plot de pertinence |
-| **Drift** | Timeline des alertes de dérive, formule composite, statistiques ADWIN/KSWIN/PH |
-| **Infrastructure** | Etat de santé des services Docker, liens d'accès, diagramme d'architecture |
-| **A propos** | Description du projet, stack technologique, endpoints API |
+| **Drift & Apprentissage** | Timeline des alertes de dérive, formule composite, statistiques ADWIN/KSWIN/PH |
+| **Alertes** | Alertes actives (fake rate, drift, confiance modèle) avec niveaux de criticité |
+| **Infrastructure** | État santé des services Docker, liens d'accès, diagramme d'architecture |
+| **À propos** | Description du projet, contexte africain, stack technologique, endpoints API |
 
 ```bash
 # Vérifier que Streamlit est bien UP
@@ -230,12 +240,17 @@ xdg-open http://localhost:8501
 
 | Métrique | Valeur |
 |----------|--------|
-| F1-score (validation) | **98.49%** |
+| F1-score macro (validation) | **98.49%** |
+| F1-score réel (classe 0) | **≥ 88 %** |
+| F1-score fake (classe 1) | **≥ 88 %** |
 | AUC-ROC | **99.89%** |
 | Latence inférence ONNX INT8 | ~5-6 ms/article |
 | Compression FP32 → INT8 | ~75% |
 | Débit (CPU 4 cœurs) | ~200 articles/batch/5s |
 | Latence end-to-end | < 10 secondes |
+
+> **v2.0** : entraînement avec dataset équilibré 50 % fake / 50 % réel (split 60/20/20)
+> + WeightedRandomSampler + reservoir séparé par classe → réduction des faux positifs.
 
 ---
 

@@ -80,8 +80,8 @@ groups:
               expression: A
               refId: B
               type: threshold
-        noDataState: NoData
-        execErrState: Error
+        noDataState: OK
+        execErrState: Alerting
         for: 2m
         annotations:
           summary: "Dérive conceptuelle détectée dans le pipeline"
@@ -140,8 +140,8 @@ groups:
               expression: A
               refId: B
               type: threshold
-        noDataState: NoData
-        execErrState: Error
+        noDataState: OK
+        execErrState: Alerting
         for: 1m
         annotations:
           summary: "Drift confirmé — mise à jour intensive du modèle activée"
@@ -200,8 +200,8 @@ groups:
               expression: A
               refId: B
               type: threshold
-        noDataState: NoData
-        execErrState: Error
+        noDataState: OK
+        execErrState: Alerting
         for: 5m
         annotations:
           summary: "Taux de fake > 70% sur les 5 dernières minutes"
@@ -260,8 +260,8 @@ groups:
               expression: A
               refId: B
               type: threshold
-        noDataState: NoData
-        execErrState: Error
+        noDataState: OK
+        execErrState: Alerting
         for: 10m
         annotations:
           summary: "Taux de fake > 40%"
@@ -320,8 +320,8 @@ groups:
               expression: A
               refId: B
               type: threshold
-        noDataState: NoData
-        execErrState: Error
+        noDataState: OK
+        execErrState: Alerting
         for: 10m
         annotations:
           summary: "Confiance moyenne du modèle insuffisante"

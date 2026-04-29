@@ -24,21 +24,24 @@ log = logging.getLogger(__name__)
 # ── INITIALISATION SPARK ─────────────────────────────────
 # local[*] : exécution dans le driver (les objets ML/MongoDB ne sont pas sérialisables)
 # Les JARs Kafka sont passés via SPARK_EXTRA_JARS ou spark.jars
-_extra_jars = os.getenv('SPARK_EXTRA_JARS', '')
+_extra_jars     = os.getenv('SPARK_EXTRA_JARS', '')
+_driver_memory  = os.getenv('SPARK_DRIVER_MEMORY', '1200m')
 _builder = SparkSession.builder \
     .appName('DisinformationPipeline') \
     .master('local[2]') \
     .config('spark.streaming.stopGracefullyOnShutdown', 'true') \
     .config('spark.sql.shuffle.partitions', '2') \
-    .config('spark.driver.memory', '1500m') \
+    .config('spark.driver.memory', _driver_memory) \
     .config('spark.driver.maxResultSize', '256m') \
     .config('spark.serializer', 'org.apache.spark.serializer.KryoSerializer') \
     .config('spark.sql.streaming.forceDeleteTempCheckpointLocation', 'true') \
     .config('spark.python.worker.memory', '256m') \
     .config('spark.memory.fraction', '0.6') \
     .config('spark.memory.storageFraction', '0.3') \
-    .config('spark.ui.enabled', 'false') \
-    .config('spark.sql.streaming.metricsEnabled', 'false') \
+    .config('spark.ui.enabled', 'true') \
+    .config('spark.ui.port', '4040') \
+    .config('spark.ui.showConsoleProgress', 'false') \
+    .config('spark.sql.streaming.metricsEnabled', 'true') \
     .config('spark.network.timeout', '800s') \
     .config('spark.executor.heartbeatInterval', '60s')
 

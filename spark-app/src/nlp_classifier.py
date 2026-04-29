@@ -1,4 +1,5 @@
 # spark-app/src/nlp_classifier.py — Classification ONNX + Online Learning
+# v2.0 : reservoir équilibré par classe pour éviter le biais vers fake
 import os, torch, numpy as np
 from transformers import DistilBertTokenizerFast
 from onnxruntime import InferenceSession, SessionOptions
@@ -6,20 +7,24 @@ from torch.optim import AdamW
 import torch.nn.functional as F
 
 
-MODEL_PRETRAINED = os.getenv('MODEL_PRETRAINED_PATH', '/app/models/pretrained')
-MODEL_ONNX       = os.getenv('MODEL_ONNX_PATH', '/app/models/onnx/model_quantized.onnx')
-ONLINE_LR_BASE   = float(os.getenv('ONLINE_LR_BASE', 1e-5))
-RESERVOIR_SIZE   = int(os.getenv('RESERVOIR_BUFFER_SIZE', 5000))
+MODEL_PRETRAINED    = os.getenv('MODEL_PRETRAINED_PATH', '/app/models/pretrained')
+MODEL_ONNX          = os.getenv('MODEL_ONNX_PATH', '/app/models/onnx/model_quantized.onnx')
+ONLINE_LR_BASE      = float(os.getenv('ONLINE_LR_BASE', 1e-5))
+RESERVOIR_SIZE      = int(os.getenv('RESERVOIR_BUFFER_SIZE', 5000))
+_RESERVOIR_PER_CLASS = RESERVOIR_SIZE // 2   # 2 500 fake + 2 500 réels
 
 
 class ContinualDistilBERT:
-    """Continual-DistilBERT : inférence ONNX + online learning PyTorch"""
+    """Continual-DistilBERT : inférence ONNX + online learning PyTorch.
 
+    Reservoir équilibré : un buffer séparé par classe (fake / réel).
+    Empêche le sur-apprentissage vers fake lors d'injections massives de drift.
+    Applicable en Afrique subsaharienne (AFP, RFI, Jeune Afrique, Al Jazeera…).
+    """
 
     def __init__(self):
         from transformers import DistilBertForSequenceClassification
         self.tokenizer = DistilBertTokenizerFast.from_pretrained(MODEL_PRETRAINED)
-        # Modèle ONNX pour l'inférence rapide — limité à 2 threads pour ne pas saturer le CPU
         _opts = SessionOptions()
         _opts.intra_op_num_threads = 2
         _opts.inter_op_num_threads = 1
@@ -28,77 +33,116 @@ class ContinualDistilBERT:
             sess_options=_opts,
             providers=['CPUExecutionProvider']
         )
-        # Modèle PyTorch pour les mises à jour online
         self.pt_model = DistilBertForSequenceClassification.from_pretrained(MODEL_PRETRAINED)
         self.pt_model.train()
         self.optimizer = AdamW(self.pt_model.parameters(), lr=ONLINE_LR_BASE, weight_decay=0.01)
-        # Reservoir buffer pour éviter l'oubli catastrophique
-        self.reservoir = []
-        self.n_seen = 0
-        self.current_lr = ONLINE_LR_BASE
-        print('[NLP] Continual-DistilBERT initialisé (ONNX + PyTorch online)')
 
+        # Reservoirs SÉPARÉS — évite que le drift injector sature le buffer de fake
+        self.reservoir_fake: list = []
+        self.reservoir_real: list = []
+        self.n_seen_fake = 0
+        self.n_seen_real = 0
+        self.current_lr  = ONLINE_LR_BASE
+        print('[NLP] Continual-DistilBERT v2.0 — reservoir équilibré (fake/réel)')
+
+    @property
+    def reservoir(self):
+        """Rétrocompatibilité : vue combinée des deux buffers."""
+        return self.reservoir_fake + self.reservoir_real
 
     def predict(self, title: str, body: str = '') -> dict:
-        """Inférence ONNX (5-6 ms) — NE met PAS à jour le modèle"""
+        """Inférence ONNX INT8 (~5-6 ms) — ne modifie pas le modèle."""
         text = f'{title[:200]} [SEP] {body[:100]}'
         enc  = self.tokenizer(text, max_length=128, padding='max_length',
                               truncation=True, return_tensors='np')
         logits = self.ort_session.run(None, {
-            'input_ids': enc['input_ids'].astype(np.int64),
+            'input_ids':      enc['input_ids'].astype(np.int64),
             'attention_mask': enc['attention_mask'].astype(np.int64)
         })[0]
         probs = F.softmax(torch.tensor(logits), dim=-1).squeeze()
         label = int(probs.argmax().item())
-        return {'label': label, 'confidence': float(probs[label]),'p_fake': float(probs[1])}
-
+        return {'label': label, 'confidence': float(probs[label]), 'p_fake': float(probs[1])}
 
     def reservoir_update(self, text: str, label: int):
-        """Reservoir sampling : garde un échantillon représentatif des données passées"""
-        self.n_seen += 1
-        if len(self.reservoir) < RESERVOIR_SIZE:
-            self.reservoir.append((text, label))
-        else:
-            j = np.random.randint(0, self.n_seen)
-            if j < RESERVOIR_SIZE:
-                self.reservoir[j] = (text, label)
+        """Reservoir sampling équilibré : maintient 50 % fake / 50 % réel.
 
+        Même si 80 % des articles entrants sont fake (drift injector),
+        le buffer de replay reste équilibré pour résister au biais de classe.
+        """
+        if label == 1:
+            self.n_seen_fake += 1
+            buf = self.reservoir_fake
+            n   = self.n_seen_fake
+        else:
+            self.n_seen_real += 1
+            buf = self.reservoir_real
+            n   = self.n_seen_real
+
+        if len(buf) < _RESERVOIR_PER_CLASS:
+            buf.append((text, label))
+        else:
+            j = np.random.randint(0, n)
+            if j < _RESERVOIR_PER_CLASS:
+                buf[j] = (text, label)
 
     def online_update(self, batch_texts: list, batch_labels: list, lr: float = None):
-        """Mise à jour online sur un batch + replay du reservoir (mini-batch pour économiser la RAM)"""
+        """Mise à jour online avec rééquilibrage batch + replay 50/50."""
         if lr and lr != self.current_lr:
-            for pg in self.optimizer.param_groups: pg['lr'] = lr
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = lr
             self.current_lr = lr
 
-        # Batch réduit à 8 pour économiser RAM (DistilBERT PyTorch crée des tensors
-        # [batch × heads × seq × seq] → mémoire proportionnelle au batch size)
-        MAX_TRAIN_TEXTS = 8
-        train_texts = batch_texts[:MAX_TRAIN_TEXTS]
-        train_labels = batch_labels[:MAX_TRAIN_TEXTS]
+        # ── Rééquilibrage du batch entrant ───────────────────────────────────
+        MAX_EACH = 4  # 4 fake + 4 réels max depuis le batch = 8 exemples
+        fake_in  = [(t, l) for t, l in zip(batch_texts, batch_labels) if l == 1]
+        real_in  = [(t, l) for t, l in zip(batch_texts, batch_labels) if l == 0]
+        n_each   = min(len(fake_in), len(real_in), MAX_EACH)
 
-        # Replay du reservoir (max 4 exemples pour rester à batch ≤ 12 total)
-        replay_size = min(4, len(self.reservoir))
-        if replay_size > 0:
-            idxs = np.random.choice(len(self.reservoir), replay_size, replace=False)
+        if n_each > 0:
+            selected = fake_in[:n_each] + real_in[:n_each]
+        else:
+            all_in   = list(zip(batch_texts, batch_labels))
+            selected = all_in[:MAX_EACH]
+
+        train_texts  = [s[0] for s in selected]
+        train_labels = [s[1] for s in selected]
+
+        # ── Replay équilibré depuis les reservoirs séparés ───────────────────
+        rp = min(2, len(self.reservoir_fake), len(self.reservoir_real))
+        if rp > 0:
+            fi = np.random.choice(len(self.reservoir_fake), rp, replace=False)
+            ri = np.random.choice(len(self.reservoir_real), rp, replace=False)
+            replay = ([self.reservoir_fake[i] for i in fi] +
+                      [self.reservoir_real[i] for i in ri])
+            train_texts  += [r[0] for r in replay]
+            train_labels += [r[1] for r in replay]
+        elif self.reservoir:
+            idxs = np.random.choice(len(self.reservoir), min(4, len(self.reservoir)), replace=False)
             replay = [self.reservoir[i] for i in idxs]
-            train_texts  = train_texts  + [r[0] for r in replay]
-            train_labels = train_labels + [r[1] for r in replay]
+            train_texts  += [r[0] for r in replay]
+            train_labels += [r[1] for r in replay]
 
-        # Tokenisation du mini-batch
-        enc = self.tokenizer(train_texts, max_length=128, padding='max_length',
-                             truncation=True, return_tensors='pt')
+        # ── Loss pondérée équilibrée ──────────────────────────────────────────
+        n_f  = sum(1 for l in train_labels if l == 1)
+        n_r  = len(train_labels) - n_f
+        if n_f > 0 and n_r > 0:
+            tot = len(train_labels)
+            # Poids inversés : classe minoritaire reçoit plus de signal
+            cw = torch.tensor([n_f / tot, n_r / tot], dtype=torch.float)
+        else:
+            cw = None
+
+        enc      = self.tokenizer(train_texts, max_length=128, padding='max_length',
+                                  truncation=True, return_tensors='pt')
         labels_t = torch.tensor(train_labels, dtype=torch.long)
-
-        # Forward + backward
         self.optimizer.zero_grad()
-        outputs = self.pt_model(**enc, labels=labels_t)
-        outputs.loss.backward()
+        out      = self.pt_model(**enc)
+        loss     = torch.nn.CrossEntropyLoss(weight=cw)(out.logits, labels_t)
+        loss.backward()
         torch.nn.utils.clip_grad_norm_(self.pt_model.parameters(), 1.0)
         self.optimizer.step()
-
-        # Sauvegarder la loss AVANT de libérer les tensors
-        loss_val = float(outputs.loss.item()) if hasattr(outputs, 'loss') else 0.0
-        del enc, labels_t, outputs
+        loss_val = float(loss.item())
+        del enc, labels_t, out, loss
         return loss_val
 
 

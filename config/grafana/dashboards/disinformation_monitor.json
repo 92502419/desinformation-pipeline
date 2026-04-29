@@ -1252,7 +1252,7 @@
       "id": 13,
       "type": "alertlist",
       "title": "État des Alertes en Temps Réel",
-      "description": "Affiche l'état des règles d'alerte configurées sur le pipeline",
+      "description": "Alertes actives du pipeline (drift, taux fake, confiance modèle)",
       "gridPos": {
         "h": 10,
         "w": 24,
@@ -1266,7 +1266,7 @@
       "options": {
         "groupBy": [],
         "groupMode": "default",
-        "maxItems": 20,
+        "maxItems": 25,
         "sortOrder": 1,
         "dashboardAlerts": false,
         "alertName": "",
@@ -1274,8 +1274,8 @@
         "stateFilter": {
           "ok": true,
           "paused": false,
-          "no_data": true,
-          "execution_error": true,
+          "no_data": false,
+          "execution_error": false,
           "alerting": true,
           "pending": true
         },
@@ -1339,7 +1339,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Disinformation Monitor — Pipeline Big Data",
+  "title": "Pipeline Désinformation — Monitoring v2.0",
   "uid": "disinformation-pipeline-v2",
   "version": 1
 }

@@ -7,12 +7,13 @@
 
 import argparse, os, sys, json
 import pandas as pd
+import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LinearLR
 from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import f1_score, roc_auc_score, classification_report
 from tqdm import tqdm
 
 
@@ -84,29 +85,44 @@ model     = DistilBertForSequenceClassification.from_pretrained(
     args.model_name, num_labels=2).to(DEVICE)
 
 
-# ── DataLoaders ─────────────────────────────────────────────
-print('Chargement des données...')
-train_ds = NewsDataset(args.train_csv, tokenizer, args.max_len)
-val_ds   = NewsDataset(args.val_csv,   tokenizer, args.max_len)
-# Sur CPU : num_workers=0 évite les erreurs de multiprocessing
-n_workers = 0 if DEVICE == 'cpu' else 4
-train_dl  = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                       num_workers=n_workers, pin_memory=(DEVICE=='cuda'))
-val_dl    = DataLoader(val_ds, batch_size=args.batch_size*2, shuffle=False,
-                       num_workers=n_workers)
-print(f'Train : {len(train_ds)} ex. | Val : {len(val_ds)} ex.')
-
-
-# ── Poids de classes ─────────────────────────────────────────
+# ── Distribution des classes ─────────────────────────────────
 lbl_series = pd.read_csv(args.train_csv)['label'].astype(int)
 n_fake  = (lbl_series == 1).sum()
 n_real  = (lbl_series == 0).sum()
 n_total = len(lbl_series)
 print(f'fake={n_fake} ({n_fake/n_total*100:.1f}%) | real={n_real} ({n_real/n_total*100:.1f}%)')
-# ✅ FIX : .float() OBLIGATOIRE — CrossEntropyLoss attend Float32
-# Sans .float() → RuntimeError: expected scalar type Float but found Double
-w       = torch.tensor([n_fake/n_total, n_real/n_total]).float().to(DEVICE)
+
+# ── DataLoaders avec WeightedRandomSampler ────────────────────
+# WeightedRandomSampler garantit des mini-batchs équilibrés (50/50)
+# même si le dataset sous-jacent est déséquilibré → empêche le biais vers fake
+print('Chargement des données...')
+train_ds = NewsDataset(args.train_csv, tokenizer, args.max_len)
+val_ds   = NewsDataset(args.val_csv,   tokenizer, args.max_len)
+
+labels_np      = train_ds.df['label'].values.astype(int)
+class_counts   = np.bincount(labels_np)
+class_weights  = 1.0 / class_counts.astype(float)
+sample_weights = class_weights[labels_np]
+sampler = WeightedRandomSampler(
+    weights=torch.from_numpy(sample_weights).float(),
+    num_samples=len(labels_np),
+    replacement=True
+)
+
+n_workers = 0 if DEVICE == 'cpu' else 4
+train_dl  = DataLoader(train_ds, batch_size=args.batch_size, sampler=sampler,
+                       num_workers=n_workers, pin_memory=(DEVICE=='cuda'))
+val_dl    = DataLoader(val_ds, batch_size=args.batch_size*2, shuffle=False,
+                       num_workers=n_workers)
+print(f'Train : {len(train_ds)} ex. | Val : {len(val_ds)} ex.')
+
+# ── Poids de classes pour CrossEntropyLoss ────────────────────
+# Poids = fréquence inverse : classe minoritaire pénalisée davantage
+w_real  = n_total / (2.0 * max(n_real,  1))
+w_fake  = n_total / (2.0 * max(n_fake, 1))
+w       = torch.tensor([w_real, w_fake], dtype=torch.float).to(DEVICE)
 loss_fn = torch.nn.CrossEntropyLoss(weight=w)
+print(f'Poids CrossEntropy → réel: {w_real:.3f} | fake: {w_fake:.3f}')
 
 
 # ── Optimiseur ──────────────────────────────────────────────
@@ -159,19 +175,30 @@ for epoch in range(args.epochs):
             val_labels.extend(batch['labels'].numpy())
             val_probs.extend(probs[:, 1].cpu().numpy())
     val_f1  = f1_score(val_labels, val_preds, average='macro')
+    val_f1_per_class = f1_score(val_labels, val_preds, average=None)
     try:    val_auc = roc_auc_score(val_labels, val_probs)
     except: val_auc = 0.0
-    print(f'         Val F1: {val_f1:.4f} | AUC: {val_auc:.4f}')
-    history.append({'epoch': epoch+1, 'train_f1': round(train_f1,4), 'val_f1': round(val_f1,4)})
+    print(f'         Val F1 macro: {val_f1:.4f} | AUC: {val_auc:.4f}')
+    print(f'         F1 réel: {val_f1_per_class[0]:.4f} | F1 fake: {val_f1_per_class[1]:.4f}')
+    history.append({
+        'epoch': epoch+1, 'train_f1': round(train_f1,4),
+        'val_f1': round(val_f1,4),
+        'f1_real': round(float(val_f1_per_class[0]),4),
+        'f1_fake': round(float(val_f1_per_class[1]),4),
+    })
 
+    # Critère de qualité équilibré : les deux classes doivent être bien classées
+    balanced_ok = (len(val_f1_per_class) == 2 and
+                   val_f1_per_class[0] >= 0.88 and
+                   val_f1_per_class[1] >= 0.88)
 
     if val_f1 > best_f1:
         best_f1 = val_f1
         model.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
         print(f'         ✅ Meilleur modèle sauvegardé ! Val F1 = {best_f1:.4f}')
-    if val_f1 >= 0.93:
-        print(f'🎯 F1 >= 0.93 — arrêt anticipé à l\'epoch {epoch+1}')
+    if val_f1 >= 0.93 and balanced_ok:
+        print(f'🎯 F1 >= 0.93 sur les deux classes — arrêt anticipé à l\'epoch {epoch+1}')
         break
 
 

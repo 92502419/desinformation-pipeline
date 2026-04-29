@@ -1,5 +1,5 @@
 # docker-compose.yml — Pipeline Big Data Désinformation
-# Version : 2025-optimisé — KOMOSSI Sosso — UCAO-UUT Master 2 BIG DATA IA
+# Version : v2.0 — KOMOSSI Sosso — UCAO-UUT Master 2 BIG DATA IA
 #
 # ARCHITECTURE VOLUMES :
 #   Volumes NOMMÉS (filesystem Linux /var/lib/docker) → bases de données
@@ -13,12 +13,19 @@
 #     → ./logs:/app/logs
 #     → ./data/spark-checkpoints:/tmp/spark-checkpoints
 #
-# OPTIMISATIONS MÉMOIRE (machine 11GB RAM) :
-#   - Spark JVM driver : 2g → 1500m  (-512MB)
-#   - Spark trigger    : 2s → 5s     (-60% charge CPU)
-#   - Elasticsearch JVM: 512m → 256m (-256MB)
+# OPTIMISATIONS MÉMOIRE (machine 12 GB RAM) :
+#   - Spark JVM driver : 2g → 1200m  (-800MB)
+#   - Spark heap total : 4G → 3G     (-1GB)
+#   - Elasticsearch JVM: 384m → 256m (-128MB)
+#   - Elasticsearch limit: 768M → 512M (-256MB)
 #   - Kafka heap       : 512m → 384m (-128MB)
-#   - Total économisé  : ~896MB
+#   - Drift-injector   : toutes 15 min → 30 min (-50% pression CPU)
+#   - Total économisé  : ~2.3 GB (Firefox peut s'ouvrir sans saturation)
+#
+# PORTS EXPOSÉS :
+#   8501 Streamlit | 8000 FastAPI | 3000 Grafana
+#   9000 Kafdrop   | 9200 ES REST | 9092 Kafka
+#   4040 Spark UI  (nouveau — interface de monitoring Spark)
 #
 # Usage : docker compose up -d
 
@@ -165,7 +172,7 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms384m -Xmx384m
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
       - cluster.name=disinformation-cluster
       - bootstrap.memory_lock=false
       - indices.memory.index_buffer_size=10%
@@ -178,10 +185,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M
-          cpus: '1.5'
+          memory: 512M
+          cpus: '1.0'
         reservations:
-          memory: 384M
+          memory: 256M
     healthcheck:
       test: ['CMD-SHELL', 'curl -sf http://localhost:9200/_cat/health | grep -qE "green|yellow"']
       interval: 20s
@@ -312,6 +319,8 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
+    ports:
+      - '4040:4040'   # Spark UI — interface web de monitoring des jobs Spark
     env_file: .env
     environment:
       KAFKA_BROKER: kafka:29092
@@ -325,7 +334,8 @@ services:
       OMP_NUM_THREADS: '2'
       MKL_NUM_THREADS: '2'
       OPENBLAS_NUM_THREADS: '2'
-      # Trigger 5s (override .env qui était à 2s)
+      # JVM réduit de 1500m → 1200m pour libérer RAM (Firefox + navigateur)
+      SPARK_DRIVER_MEMORY: '1200m'
       SPARK_MICRO_BATCH_INTERVAL: '5 seconds'
     volumes:
       # Modèles ML depuis le disque externe (lecture seule — pas de locking nécessaire)
@@ -338,10 +348,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: '2.5'
+          memory: 3G
+          cpus: '2.0'
         reservations:
-          memory: 2G
+          memory: 1500M
 
 
   # ════════════════════════════════════════════════════════
@@ -442,9 +452,16 @@ services:
       KAFKA_TOPIC_RAW: raw-news-stream
     volumes:
       - ./scripts:/app/scripts:ro
-    entrypoint: ["python", "/app/scripts/inject_drift_simulation.py",
-                 "--daemon", "--scenario", "B",
-                 "--initial-delay", "90", "--interval", "900"]
+    entrypoint:
+      - python
+      - /app/scripts/inject_drift_simulation.py
+      - "--daemon"
+      - "--scenario"
+      - "B"
+      - "--initial-delay"
+      - "120"
+      - "--interval"
+      - "1800"
     deploy:
       resources:
         limits:

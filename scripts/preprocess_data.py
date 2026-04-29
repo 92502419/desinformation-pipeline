@@ -146,29 +146,40 @@ print('\nFusion et nettoyage...')
 corpus = pd.concat(dfs, ignore_index=True)
 print(f'Avant nettoyage : {len(corpus)} exemples')
 
-
-# Nettoyage texte
 corpus['title'] = corpus['title'].apply(clean_text)
 corpus['body']  = corpus['body'].apply(clean_text)
-
-
-# Suppression des titres vides ou trop courts
 corpus = corpus[corpus['title'].str.len() > 5]
-
-
-# Déduplication sur le titre
 n_before = len(corpus)
 corpus = corpus.drop_duplicates(subset=['title'])
 print(f'Doublons supprimés : {n_before - len(corpus)}')
-print(f'Corpus final : {len(corpus)} exemples')
 print(corpus[['label','source']].value_counts().to_string())
 
 
-# ── SPLIT 80/10/10 ───────────────────────────────────────
-train_val, test = train_test_split(
-    corpus, test_size=0.10, stratify=corpus['label'], random_state=42)
+# ── ÉQUILIBRAGE DES CLASSES (50 % fake / 50 % réel) ─────────
+# Évite que le modèle apprenne à détecter le fake mieux que le vrai.
+# Sous-échantillonnage de la classe majoritaire vers la plus petite.
+fake_df   = corpus[corpus['label'] == 1]
+real_df   = corpus[corpus['label'] == 0]
+min_count = min(len(fake_df), len(real_df))
+corpus_balanced = pd.concat([
+    fake_df.sample(min_count, random_state=42),
+    real_df.sample(min_count, random_state=42)
+]).sample(frac=1, random_state=42).reset_index(drop=True)
+
+print(f'\nCorpus équilibré : {len(corpus_balanced)} exemples '
+      f'({min_count} fake + {min_count} réel = 50 % / 50 %)')
+
+
+# ── SPLIT 60 / 20 / 20 ──────────────────────────────────────
+# 60 % entraînement / 20 % validation / 20 % test
+# Split stratifié : conserve le ratio 50/50 dans chaque sous-ensemble
+train_tmp, test = train_test_split(
+    corpus_balanced, test_size=0.20,
+    stratify=corpus_balanced['label'], random_state=42)
 train, val = train_test_split(
-    train_val, test_size=0.111, stratify=train_val['label'], random_state=42)
+    train_tmp, test_size=0.25,
+    stratify=train_tmp['label'], random_state=42)
+# 0.25 × 80 % = 20 % du total → split final 60 / 20 / 20
 
 
 train.to_csv(f'{OUT}/train/train.csv', index=False)
@@ -176,7 +187,9 @@ val.to_csv(  f'{OUT}/val/val.csv',     index=False)
 test.to_csv( f'{OUT}/test/test.csv',   index=False)
 
 
-print(f'\nTrain : {len(train)} | Val : {len(val)} | Test : {len(test)}')
+print(f'\nTrain : {len(train)} ({len(train[train.label==1])} fake / {len(train[train.label==0])} réel)')
+print(f'Val   : {len(val)}   ({len(val[val.label==1])} fake / {len(val[val.label==0])} réel)')
+print(f'Test  : {len(test)}  ({len(test[test.label==1])} fake / {len(test[test.label==0])} réel)')
 print('Prétraitement terminé !')
 print(f'Fichiers générés dans {OUT}/')
 

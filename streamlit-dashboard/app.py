@@ -444,7 +444,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown(f"<div style='font-size:0.68rem;opacity:0.5;margin-top:12px;'>v1.0 · {datetime.now().strftime('%H:%M:%S')}</div>",
+    st.markdown(f"<div style='font-size:0.68rem;opacity:0.5;margin-top:12px;'>v2.0 · {datetime.now().strftime('%H:%M:%S')}</div>",
                 unsafe_allow_html=True)
 
     if not _backend_ok():
@@ -1438,6 +1438,12 @@ elif "Infrastructure" in page:
         <div class="desc">Interface Kafka UI</div>
         <span class="badge">port 9000</span>
       </div>
+      <div class="arch-item">
+        <div class="icon">🔥</div>
+        <div class="name">Spark UI</div>
+        <div class="desc">Monitoring jobs<br>Spark Streaming</div>
+        <span class="badge">port 4040</span>
+      </div>
     </div>
   </div>
 
@@ -1445,18 +1451,21 @@ elif "Infrastructure" in page:
 """, unsafe_allow_html=True)
 
     st.markdown("---")
-    st.subheader("💾 Allocation Mémoire")
+    st.subheader("💾 Allocation Mémoire (optimisée 12 GB)")
     mem = {
         "Service":    ["spark-app", "Elasticsearch", "Kafka", "MongoDB",
-                       "Kafdrop", "Grafana", "FastAPI", "Streamlit", "Autres"],
-        "Limite (MB)":[4096, 768, 640, 512, 192, 256, 256, 512, 256],
+                       "Kafdrop", "Grafana", "FastAPI", "Streamlit", "drift-injector", "Autres"],
+        "Limite (MB)":[3072, 512, 640, 512, 192, 256, 256, 512, 128, 256],
     }
     fig_mem = px.bar(pd.DataFrame(mem), x="Service", y="Limite (MB)",
                      color="Service", text="Limite (MB)",
-                     color_discrete_sequence=px.colors.qualitative.Set3, height=260)
+                     color_discrete_sequence=px.colors.qualitative.Set3, height=280)
     fig_mem.update_layout(showlegend=False, margin=dict(t=5, b=5))
-    fig_mem.add_hline(y=11*1024, line_dash="dash", line_color="red",
-                      annotation_text="RAM totale ≈ 11 GB")
+    fig_mem.add_hline(y=12*1024, line_dash="dash", line_color="red",
+                      annotation_text="RAM totale = 12 GB")
+    fig_mem.add_hline(y=sum([3072,512,640,512,192,256,256,512,128,256]),
+                      line_dash="dot", line_color="orange",
+                      annotation_text="Total alloué ≈ 6.4 GB (Firefox OK)")
     st.plotly_chart(fig_mem, use_container_width=True)
 
 
@@ -1471,24 +1480,33 @@ elif "propos" in page:
     with col_info:
         st.markdown("""
         ## Pipeline Big Data de Monitoring de la Désinformation en Temps Réel
+        ### Version 2.0 — Afrique subsaharienne & déploiement mondial
 
         Ce projet constitue le mémoire de fin d'études du **Master BIG DATA IA**
         à l'**Université Catholique de l'Afrique de l'Ouest — Unité Universitaire
         du Togo (UCAO UUT)**, année 2025-2026.
 
+        > **Contexte africain** : le pipeline est conçu et validé pour la surveillance
+        > de la désinformation en Afrique subsaharienne (sources AFP Afrique, RFI, Jeune Afrique,
+        > Al Jazeera, France24, VOA Afrique…) mais son architecture est universelle et
+        > peut être déployée sur tout autre continent.
+
         ### 🎯 Objectifs
 
-        1. **Collecte en temps réel** d'articles via RSS et l'API GDELT
-        2. **Classification automatique** fake/réel par Continual-DistilBERT (ONNX INT8)
+        1. **Collecte en temps réel** d'articles via RSS (12 sources) et l'API GDELT
+        2. **Classification automatique** fake/réel par Continual-DistilBERT ONNX INT8
         3. **Détection de concept drift** pour adapter le modèle aux nouvelles formes de désinformation
-        4. **Apprentissage continu** avec reservoir sampling (évite l'oubli catastrophique)
-        5. **Visualisation temps réel** via ce dashboard, Grafana et une API REST
+        4. **Apprentissage continu équilibré** — reservoir 50/50 fake/réel (évite l'oubli + le biais)
+        5. **Visualisation temps réel** via ce dashboard, Grafana (métriques), API REST et Spark UI
 
-        ### 🔬 Innovations Techniques
+        ### 🔬 Innovations Techniques (v2.0)
 
-        - **Continual Learning** : adaptation continue sans réentraînement complet
-        - **Tri-détecteur hybride** : ADWIN + KSWIN + PageHinkley avec score composite pondéré
-        - **Inférence ultra-rapide** : ONNX INT8 quantifié (75% de compression, ~5-6 ms/article)
+        - **Reservoir équilibré par classe** : 2 500 fake + 2 500 réels → résiste aux injections massives de drift
+        - **Entraînement équilibré 50/50** : WeightedRandomSampler garantit des mini-batchs équilibrés
+        - **Dataset balancé** : sous-échantillonnage vers 50 % fake / 50 % réel (split 60/20/20)
+        - **Tri-détecteur hybride** : ADWIN(0.45) + KSWIN(0.35) + PageHinkley(0.20)
+        - **Inférence ultra-rapide** : ONNX INT8 quantifié (75 % compression, ~5-6 ms/article)
+        - **Interface Spark UI** : monitoring des jobs en temps réel (port 4040)
         - **Architecture 11 services Docker** : entièrement conteneurisée et reproductible
 
         ### 📊 Stack Technologique
@@ -1496,14 +1514,29 @@ elif "propos" in page:
 
         tech = {
             "Composant":  ["Apache Kafka", "Apache Spark", "DistilBERT", "ONNX Runtime",
-                           "River", "MongoDB", "Elasticsearch", "FastAPI", "Streamlit", "Docker"],
+                           "River", "MongoDB", "Elasticsearch", "FastAPI", "Streamlit",
+                           "Grafana", "Docker"],
             "Version":    ["3.7 (Confluent 7.6)", "3.5.3", "multilingual-cased",
-                           "1.19.0", "0.21.2", "7.0", "8.14.0", "0.113", "1.38", "Compose v2"],
+                           "1.19.0", "0.21.2", "7.0", "8.14.0", "0.113", "1.38",
+                           "10.4.0", "Compose v2"],
             "Rôle":       ["Message Broker", "Streaming Engine", "Modèle NLP",
                            "Inférence rapide", "Concept Drift", "Document Store",
-                           "Full-Text Search", "API REST", "Dashboard", "Orchestration"],
+                           "Full-Text Search", "API REST", "Dashboard interactif",
+                           "Métriques & alertes", "Orchestration"],
         }
         st.dataframe(pd.DataFrame(tech), use_container_width=True, hide_index=True)
+
+        st.markdown("### 🌍 Interfaces Accessibles")
+        ports_data = {
+            "Interface":  ["Streamlit Dashboard", "FastAPI Swagger", "Grafana",
+                           "Kafdrop (Kafka UI)", "Elasticsearch REST", "Spark UI"],
+            "Port":       [":8501", ":8000/docs", ":3000",
+                           ":9000", ":9200", ":4040"],
+            "Description":["Interface principale (7 pages)", "Documentation API interactive",
+                           "Métriques & alertes temps réel", "Monitoring des topics Kafka",
+                           "Recherche & indexation", "Monitoring jobs Spark Streaming"],
+        }
+        st.dataframe(pd.DataFrame(ports_data), use_container_width=True, hide_index=True)
 
     with col_meta:
         st.markdown("### 👤 Auteur")
@@ -1519,12 +1552,15 @@ elif "propos" in page:
         M. BABA Kpatcha
 
         ---
+        **Version :** 2.0 (2026)
         """)
 
         st.markdown("### 📈 Performances du Modèle")
         perf = {
-            "Métrique": ["F1-Score", "AUC-ROC", "Latence ONNX", "Compression modèle"],
-            "Valeur":   ["98.49%",   "99.89%",  "~5-6 ms",      "75% (FP32→INT8)"]
+            "Métrique": ["F1-Score macro", "AUC-ROC", "F1 Réel", "F1 Fake",
+                         "Latence ONNX", "Compression"],
+            "Valeur":   ["98.49%", "99.89%", "≥ 88 %", "≥ 88 %",
+                         "~5-6 ms", "75 % (FP32→INT8)"]
         }
         st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
 
@@ -1534,7 +1570,18 @@ elif "propos" in page:
         - **WELFake** (72 134 articles)
         - **FakeNewsNet** (~23 196 articles)
         - **LIAR** (12 836 articles)
-        - **Total : ~153 064 exemples**
+        - **Total brut : ~153 064 exemples**
+        - **Après équilibrage 50/50 :**
+          split 60 % train / 20 % val / 20 % test
+        """)
+
+        st.markdown("### ⚙️ Ressources Machine")
+        st.markdown("""
+        - RAM : 12 GB (optimisé)
+        - CPU : 8 cœurs
+        - Spark driver : 1 200 MB
+        - ES JVM : 256 MB
+        - Drift injector : 30 min/cycle
         """)
 
     st.markdown("---")
@@ -1547,6 +1594,7 @@ elif "propos" in page:
         ("GET", "/api/v1/articles/virality",     "Tendance horaire du taux de fake"),
         ("GET", "/api/v1/drift/events",          "Historique des alertes drift"),
         ("GET", "/api/v1/drift/stats",           "Statistiques agrégées drift"),
+        ("POST","/api/v1/drift/inject",          "Injection manuelle de concept drift"),
     ]
     st.dataframe(pd.DataFrame(endpoints, columns=["Méthode","Endpoint","Description"]),
                  use_container_width=True, hide_index=True,
