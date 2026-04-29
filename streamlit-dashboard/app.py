@@ -766,8 +766,9 @@ elif "Recherche" in page:
         <div style='background:linear-gradient(135deg,#1A537E,#2C3E50);border-radius:10px;
                     padding:14px 18px;color:white;margin-bottom:16px;'>
           <b>Recherche Web intelligente</b> — Saisissez n'importe quel sujet d'actualité.
-          Le moteur recherche sur internet (DuckDuckGo News), soumet les articles au modèle
-          <b>Continual-DistilBERT</b> et vous indique en temps réel si les nouvelles sont
+          Le moteur recherche sur internet (<b>Google News RSS</b> + DuckDuckGo en secours),
+          soumet les articles au modèle <b>Continual-DistilBERT</b> et vous indique en temps
+          réel si les nouvelles sont
           <span style='color:#E74C3C;font-weight:bold;'>FAKE</span> ou
           <span style='color:#2ECC71;font-weight:bold;'>RÉELLES</span>.<br>
           <small>⚡ Les articles analysés enrichissent automatiquement l'apprentissage du modèle.</small>

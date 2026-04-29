@@ -27,4 +27,4 @@ COPY src/ ./src/
 
 # Démarrage depuis /app (src.main:app) : sys.path inclut /app,
 # et main.py ajoute /app/src via sys.path.insert pour les imports de routers
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

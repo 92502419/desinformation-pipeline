@@ -140,48 +140,84 @@ def _save_to_mongo(articles: list):
         client.close()
 
 
-_DDG_RETRY_DELAYS  = [5, 20, 45]  # secondes entre tentatives
-_DDG_MIN_INTERVAL  = 4.0           # délai minimum entre deux requêtes DuckDuckGo
-_ddg_last_call_ts  = 0.0           # timestamp du dernier appel réussi
+def _google_news_search(q: str, limit: int) -> list:
+    """Recherche via Google News RSS — gratuit, sans clé API, sans rate-limit."""
+    import httpx, xml.etree.ElementTree as ET, urllib.parse
+    url = (
+        f"https://news.google.com/rss/search"
+        f"?q={urllib.parse.quote(q)}&hl=fr&gl=FR&ceid=FR:fr"
+    )
+    try:
+        resp = httpx.get(url, timeout=12, follow_redirects=True,
+                         headers={"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"})
+        resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(502, f"Erreur Google News RSS : {e}")
 
-def _ddg_search(q: str, limit: int) -> list:
-    """Recherche DuckDuckGo News avec délai minimum + 3 tentatives backoff."""
+    root = ET.fromstring(resp.text)
+    results = []
+    for item in root.findall(".//item")[:limit]:
+        raw_title  = item.findtext("title", "") or ""
+        raw_desc   = item.findtext("description", "") or ""
+        link       = item.findtext("link", "") or ""
+        source_el  = item.find("source")
+        source     = source_el.text if source_el is not None else "Google News"
+        pubdate    = item.findtext("pubDate", "") or ""
+
+        # Nettoyer les artefacts CDATA ou HTML éventuels
+        title = raw_title.replace("<![CDATA[", "").replace("]]>", "").strip()
+        body  = raw_desc.replace("<![CDATA[", "").replace("]]>", "").strip()
+        # Supprimer balises HTML basiques dans la description
+        import re
+        body = re.sub(r"<[^>]+>", " ", body).strip()
+
+        if title:
+            results.append({
+                "title":  title[:500],
+                "body":   body[:2000],
+                "url":    link,
+                "source": source,
+                "date":   pubdate,
+            })
+    return results
+
+
+_DDG_MIN_INTERVAL = 4.0
+_ddg_last_call_ts = 0.0
+
+def _ddg_news_search(q: str, limit: int) -> list:
+    """Fallback DuckDuckGo News avec délai minimum + 2 tentatives."""
     global _ddg_last_call_ts
     from duckduckgo_search import DDGS
 
-    # Respecter l'intervalle minimum entre requêtes successives
     wait = _DDG_MIN_INTERVAL - (time.time() - _ddg_last_call_ts)
     if wait > 0:
-        log.info("[web-search] Délai anti-ratelimit : %.1fs", wait)
         time.sleep(wait)
 
-    last_exc = None
-    for attempt, delay in enumerate([0] + _DDG_RETRY_DELAYS):
+    for attempt, delay in enumerate([0, 8]):
         if delay:
-            log.info("[web-search] Rate-limit DuckDuckGo, attente %ds (tentative %d/4)…", delay, attempt + 1)
             time.sleep(delay)
         try:
             with DDGS() as ddgs:
-                results = list(ddgs.news(
-                    keywords=q,
-                    max_results=limit,
-                    region="wt-wt",
-                    safesearch="off",
-                ))
+                results = list(ddgs.news(keywords=q, max_results=limit,
+                                         region="wt-wt", safesearch="off"))
             _ddg_last_call_ts = time.time()
             return results
         except Exception as e:
-            last_exc = e
             err_str = str(e).lower()
-            is_ratelimit = "ratelimit" in err_str or "429" in err_str or "403" in err_str
-            if not is_ratelimit:
-                raise HTTPException(502, f"Erreur recherche internet : {str(e)}")
-            log.warning("[web-search] Rate-limit DuckDuckGo (tentative %d/4) : %s", attempt + 1, e)
-    raise HTTPException(
-        429,
-        "DuckDuckGo a temporairement limité les requêtes. Attendez 2-3 minutes et réessayez. "
-        "Conseil : évitez de lancer plusieurs recherches à la suite très rapidement."
-    )
+            if not any(x in err_str for x in ["ratelimit", "429", "403"]):
+                return []  # autre erreur : ignorer silencieusement
+            log.warning("[web-search] DuckDuckGo rate-limit (tentative %d/2)", attempt + 1)
+    return []
+
+
+def _news_search(q: str, limit: int) -> list:
+    """Google News RSS (primaire) + DuckDuckGo fallback."""
+    results = _google_news_search(q, limit)
+    if not results:
+        log.info("[web-search] Google News vide — tentative DuckDuckGo")
+        results = _ddg_news_search(q, limit)
+    return results
 
 
 @router.get("/web")
@@ -190,20 +226,20 @@ def web_search(
     limit: int = Query(8, ge=1, le=15, description="Nombre max d'articles à analyser"),
 ):
     """
-    Recherche des articles d'actualité sur internet via DuckDuckGo News,
-    les classifie immédiatement via ONNX DistilBERT INT8 (< 10 ms/article)
-    et retourne les prédictions fake/réel avec score de confiance.
+    Recherche des articles d'actualité sur internet via Google News RSS (primaire)
+    ou DuckDuckGo News (fallback), les classifie immédiatement via ONNX DistilBERT INT8
+    (< 10 ms/article) et retourne les prédictions fake/réel avec score de confiance.
 
     Les articles sont aussi envoyés à Kafka pour l'apprentissage continu de Spark.
     """
-    # ── 1. Cache ou DuckDuckGo News (3 tentatives avec backoff) ─────────────
+    # ── 1. Cache ou recherche web (Google News RSS primaire + DDG fallback) ───
     cache_key = f"{q.strip().lower()}:{limit}"
     cached = _cache_get(cache_key)
     if cached:
         log.info("[web-search] Cache hit pour «%s»", q)
         return {**cached, "cached": True}
 
-    raw_results = _ddg_search(q, limit)
+    raw_results = _news_search(q, limit)
 
     if not raw_results:
         return {
