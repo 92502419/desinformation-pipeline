@@ -10,8 +10,9 @@ from dotenv import load_dotenv
 
 # ── Ajout du répertoire src/ au sys.path pour les imports relatifs ──
 sys.path.insert(0, os.path.dirname(__file__))
-from routers.articles import router as articles_router
-from routers.drift    import router as drift_router
+from routers.articles   import router as articles_router
+from routers.drift      import router as drift_router
+from routers.web_search import router as web_search_router
 
 load_dotenv()
 
@@ -19,9 +20,11 @@ app = FastAPI(
     title='Disinformation Monitor API',
     description=(
         'API temps réel pour le monitoring de la désinformation — '
-        'KOMOSSI Sosso, Master 2 IBDIA, UCAO-UUT 2025-2026'
+        'KOMOSSI Sosso, Master 2 IBDIA, UCAO-UUT 2025-2026.\n\n'
+        '**Nouveau v2.0** : `/api/v1/search/web` — recherche internet + '
+        'classification fake/réel en temps réel via le pipeline ML.'
     ),
-    version='2.0.0',
+    version='2.1.0',
     docs_url='/docs',
     redoc_url='/redoc',
 )
@@ -35,8 +38,9 @@ app.add_middleware(
 )
 
 # ── Inclusion des routers ────────────────────────────────────────────
-app.include_router(articles_router)   # /api/v1/articles/*
-app.include_router(drift_router)      # /api/v1/drift/*
+app.include_router(articles_router)    # /api/v1/articles/*
+app.include_router(drift_router)       # /api/v1/drift/*
+app.include_router(web_search_router)  # /api/v1/search/web
 
 # ── Connexions globales (santé + stats) ─────────────────────────────
 mongo = MongoClient(os.getenv('MONGO_URI', 'mongodb://mongodb:27017'))

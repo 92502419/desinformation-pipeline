@@ -751,120 +751,308 @@ elif "Articles" in page:
 # PAGE 3 — RECHERCHE & ANALYSE
 # ═════════════════════════════════════════════════════════════════════════════
 elif "Recherche" in page:
-    section_header("🔍", "Recherche & Analyse Full-Text (Elasticsearch)")
+    section_header("🔍", "Recherche & Analyse — Base de données & Internet")
 
     if "search_history" not in st.session_state:
         st.session_state["search_history"] = []
 
-    cs1, cs2, cs3 = st.columns([4, 1, 1])
-    with cs1:
-        query = st.text_input("🔎 Requête",
-                              placeholder="Ex: désinformation, Covid, élections, Ukraine...",
-                              label_visibility="collapsed")
-    with cs2:
-        nb_results = st.selectbox("Résultats", [10, 20, 50], label_visibility="collapsed")
-    with cs3:
-        fake_filter_opt = st.selectbox("Filtrer", ["Tous", "Fake only", "Réel only"],
-                                       label_visibility="collapsed")
+    tab_web, tab_db = st.tabs(["🌐 Recherche Web en direct", "🗄️ Base de données (Elasticsearch)"])
 
-    fake_f = None
-    if fake_filter_opt == "Fake only":  fake_f = 1
-    if fake_filter_opt == "Réel only":  fake_f = 0
+    # ─────────────────────────────────────────────────────────────────────────
+    # ONGLET 1 — RECHERCHE WEB EN DIRECT
+    # ─────────────────────────────────────────────────────────────────────────
+    with tab_web:
+        st.markdown("""
+        <div style='background:linear-gradient(135deg,#1A537E,#2C3E50);border-radius:10px;
+                    padding:14px 18px;color:white;margin-bottom:16px;'>
+          <b>Recherche Web intelligente</b> — Saisissez n'importe quel sujet d'actualité.
+          Le moteur recherche sur internet (DuckDuckGo News), soumet les articles au modèle
+          <b>Continual-DistilBERT</b> et vous indique en temps réel si les nouvelles sont
+          <span style='color:#E74C3C;font-weight:bold;'>FAKE</span> ou
+          <span style='color:#2ECC71;font-weight:bold;'>RÉELLES</span>.<br>
+          <small>⚡ Les articles analysés enrichissent automatiquement l'apprentissage du modèle.</small>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if query:
-        if query not in st.session_state["search_history"]:
-            st.session_state["search_history"].insert(0, query)
-            st.session_state["search_history"] = st.session_state["search_history"][:10]
+        wq_col1, wq_col2, wq_col3 = st.columns([5, 1, 1])
+        with wq_col1:
+            web_query = st.text_input(
+                "🌐 Sujet à analyser",
+                placeholder="Ex: coup d'état Afrique, vaccin COVID, élections fraude, Ebola...",
+                label_visibility="collapsed",
+                key="web_search_input"
+            )
+        with wq_col2:
+            web_limit = st.selectbox("Articles", [5, 8, 10, 15],
+                                     index=1, label_visibility="collapsed", key="web_limit")
+        with wq_col3:
+            web_btn = st.button("🔎 Analyser", type="primary", use_container_width=True,
+                                key="web_search_btn")
 
-        with st.spinner("Recherche en cours..."):
-            results = search_articles(query, size=nb_results, fake_filter=fake_f)
-
-        if results.empty:
-            st.warning(f"Aucun résultat pour **{query}**.")
-        else:
-            total_r = len(results)
-            fakes_r = int(results["is_fake"].sum()) if "is_fake" in results.columns else 0
-            reals_r = total_r - fakes_r
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Résultats", total_r)
-            c2.metric("🔴 Faux", fakes_r)
-            c3.metric("🟢 Vrais", reals_r)
-            if fakes_r + reals_r > 0:
-                c4.metric("Taux fake", f"{fakes_r/(fakes_r+reals_r)*100:.1f}%")
-
-            st.markdown("---")
-
-            cr1, cr2 = st.columns([1, 1])
-            with cr1:
-                if "p_fake" in results.columns:
-                    fig_sc = px.scatter(
-                        results, x=results.index, y="p_fake", color="is_fake",
-                        color_discrete_map={1: CLR_FAKE, 0: CLR_REAL},
-                        size="confidence" if "confidence" in results.columns else None,
-                        hover_data=["title"] if "title" in results.columns else [],
-                        labels={"p_fake": "Score Fake", "index": "Rang"},
-                        title=f"Scores — « {query} »", height=260
-                    )
-                    fig_sc.update_layout(margin=dict(t=40, b=5), showlegend=False)
-                    st.plotly_chart(fig_sc, use_container_width=True)
-
-            with cr2:
-                wf_r = get_word_frequencies(results, n=15)
-                if not wf_r.empty:
-                    fig_wr = px.bar(wf_r, x="fréquence", y="mot", orientation="h",
-                                    color="fréquence", color_continuous_scale="Blues",
-                                    title="Mots fréquents dans les résultats", height=260)
-                    fig_wr.update_layout(margin=dict(t=40, b=5), showlegend=False,
-                                         coloraxis_showscale=False,
-                                         yaxis=dict(autorange="reversed"))
-                    st.plotly_chart(fig_wr, use_container_width=True)
-
-            # Export résultats
-            if not results.empty:
-                csv_r = results.to_csv(index=False)
-                st.download_button("⬇️ Exporter résultats (CSV)", csv_r,
-                                   f"recherche_{query[:20]}.csv", "text/csv")
-
-            st.markdown("---")
-            st.subheader("Résultats détaillés")
-            for _, row in results.iterrows():
-                is_fake  = row.get("is_fake", 0) == 1
-                btxt     = "🔴 FAKE" if is_fake else "🟢 RÉEL"
-                conf     = row.get("confidence", 0) * 100
-                with st.expander(f"{btxt} {row.get('title','(sans titre)')[:85]}"):
-                    st.markdown(f"**Source :** {row.get('source','?')} | "
-                                f"**Langue :** {row.get('language','?')} | "
-                                f"**Confiance :** {conf:.1f}%")
-                    if row.get("url"):
-                        st.markdown(f"[🔗 Lien]({row.get('url')})")
-    else:
-        # Historique des recherches
-        if st.session_state["search_history"]:
-            st.markdown("#### 🕐 Recherches récentes")
-            cols_h = st.columns(min(5, len(st.session_state["search_history"])))
-            for col, term in zip(cols_h, st.session_state["search_history"][:5]):
-                col.markdown(f"""
-                <div style="background:white;border-radius:8px;padding:10px;
-                            text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.1);
-                            cursor:pointer;font-size:0.85rem;">{term}</div>
-                """, unsafe_allow_html=True)
-            st.markdown("---")
-
-        st.markdown("#### 💡 Exemples de recherches")
-        examples = [("COVID-19","Pandémie"), ("élections","Politique"),
-                    ("Ukraine","Géopolitique"), ("vaccins","Santé"),
-                    ("deepfake","Technologie")]
-        cols_e = st.columns(len(examples))
-        for col, (term, cat) in zip(cols_e, examples):
+        # Exemples thématiques africains + globaux
+        st.markdown("**💡 Sujets suggérés :**")
+        ex_cols = st.columns(6)
+        web_examples = [
+            ("Ebola Afrique","Santé"), ("élections Togo","Politique"),
+            ("coup d'état Niger","Géopolitique"), ("vaccin mpox","Santé"),
+            ("IA deepfake","Technologie"), ("désinformation Sahel","Sécurité")
+        ]
+        for col, (term, cat) in zip(ex_cols, web_examples):
             with col:
                 st.markdown(f"""
-                <div style="background:white;border-radius:8px;padding:12px;
-                            text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.1);">
-                    <div style="font-weight:600;">{term}</div>
-                    <div style="font-size:0.75rem;color:#7F8C8D;">{cat}</div>
-                </div>
-                """, unsafe_allow_html=True)
+                <div style='background:white;border-radius:7px;padding:8px;text-align:center;
+                            box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.78rem;'>
+                  <b>{term}</b><br>
+                  <span style='color:#7F8C8D;font-size:0.7rem;'>{cat}</span>
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown("")
+
+        if web_query and (web_btn or web_query):
+            if web_query not in st.session_state["search_history"]:
+                st.session_state["search_history"].insert(0, web_query)
+                st.session_state["search_history"] = st.session_state["search_history"][:10]
+
+            progress_bar = st.progress(0, text="Recherche sur internet…")
+            status_area  = st.empty()
+
+            try:
+                status_area.info("📡 Interrogation de DuckDuckGo News…")
+                progress_bar.progress(20, text="Récupération des articles…")
+
+                resp = requests.get(
+                    f"{API_BASE}/api/v1/search/web",
+                    params={"q": web_query, "limit": web_limit},
+                    timeout=30
+                )
+
+                if resp.status_code != 200:
+                    progress_bar.empty()
+                    status_area.error(f"Erreur API : {resp.status_code} — {resp.text[:200]}")
+                else:
+                    data = resp.json()
+                    articles_web = data.get("articles", [])
+                    total_found  = data.get("total_found", 0)
+                    n_classified = data.get("classified", 0)
+                    n_pending    = data.get("pending", 0)
+
+                    progress_bar.progress(80, text="Classification en cours…")
+                    status_area.empty()
+
+                    if not articles_web:
+                        progress_bar.empty()
+                        st.warning(f"Aucun article trouvé pour **{web_query}** sur internet.")
+                    else:
+                        progress_bar.progress(100, text="Terminé !")
+                        time.sleep(0.3)
+                        progress_bar.empty()
+
+                        # KPIs
+                        classified_arts = [a for a in articles_web if a.get("is_fake") is not None]
+                        n_fake_w  = sum(1 for a in classified_arts if a.get("is_fake") == 1)
+                        n_real_w  = sum(1 for a in classified_arts if a.get("is_fake") == 0)
+                        fake_pct_w = n_fake_w / len(classified_arts) * 100 if classified_arts else 0
+
+                        k1, k2, k3, k4, k5 = st.columns(5)
+                        k1.metric("Trouvés sur le web", total_found)
+                        k2.metric("Classifiés", n_classified)
+                        k3.metric("🔴 Fake", n_fake_w)
+                        k4.metric("🟢 Réels", n_real_w)
+                        k5.metric("Taux fake", f"{fake_pct_w:.1f}%",
+                                  delta="⚠️ Élevé" if fake_pct_w > 50 else "✅ Normal",
+                                  delta_color="inverse" if fake_pct_w > 50 else "normal")
+
+                        if n_pending > 0:
+                            st.info(f"⏳ {n_pending} article(s) encore en cours de classification "
+                                    f"(délai Spark). Actualisez dans quelques secondes.")
+
+                        st.markdown(f"*{data.get('message','')}*")
+                        st.markdown("---")
+
+                        # Graphique de confiance
+                        if classified_arts:
+                            df_web = pd.DataFrame(classified_arts)
+                            if "p_fake" in df_web.columns and "title" in df_web.columns:
+                                df_web["label"]  = df_web["is_fake"].map({1: "🔴 FAKE", 0: "🟢 RÉEL"})
+                                df_web["titre_court"] = df_web["title"].str[:50]
+                                fig_web = px.bar(
+                                    df_web, x="titre_court", y="p_fake",
+                                    color="label",
+                                    color_discrete_map={"🔴 FAKE": CLR_FAKE, "🟢 RÉEL": CLR_REAL},
+                                    title=f"Score de désinformation — « {web_query} »",
+                                    labels={"p_fake": "Probabilité fake", "titre_court": "Article"},
+                                    height=280
+                                )
+                                fig_web.add_hline(y=0.5, line_dash="dash",
+                                                  line_color="orange", annotation_text="Seuil 50%")
+                                fig_web.update_layout(margin=dict(t=40, b=5),
+                                                      xaxis_tickangle=-30, showlegend=True)
+                                st.plotly_chart(fig_web, use_container_width=True)
+
+                        st.markdown("### 📋 Résultats détaillés")
+                        for art in articles_web:
+                            is_f   = art.get("is_fake")
+                            conf   = art.get("confidence") or 0
+                            p_fake = art.get("p_fake") or 0
+                            url    = art.get("url", "")
+                            title  = art.get("title", "(sans titre)")
+                            source = art.get("source", "?")
+
+                            if is_f is None:
+                                badge = "⏳ EN ATTENTE"
+                                card_color = "#F8F9FA"
+                                border_color = "#BDC3C7"
+                            elif is_f == 1:
+                                badge = "🔴 FAKE"
+                                card_color = "#FDEDEC"
+                                border_color = CLR_FAKE
+                            else:
+                                badge = "🟢 RÉEL"
+                                card_color = "#EAFAF1"
+                                border_color = CLR_REAL
+
+                            with st.expander(f"{badge}  {title[:80]}"):
+                                col_l, col_r = st.columns([3, 1])
+                                with col_l:
+                                    st.markdown(f"**Source :** {source}")
+                                    if url:
+                                        st.markdown(f"🔗 **Lien original :** [{url[:70]}...]({url})")
+                                    if art.get("body"):
+                                        st.markdown(f"*{art['body'][:300]}…*")
+                                with col_r:
+                                    if is_f is not None:
+                                        st.metric("Confiance", f"{conf*100:.1f}%")
+                                        st.metric("P(fake)", f"{p_fake*100:.1f}%")
+                                        verdict = "Désinformation probable" if is_f == 1 else "Information fiable"
+                                        st.markdown(f"**Verdict :** {verdict}")
+
+                        # Export CSV
+                        if articles_web:
+                            df_exp = pd.DataFrame(articles_web)
+                            csv_web = df_exp[["title","url","source","is_fake","confidence","p_fake"]].to_csv(index=False)
+                            st.download_button(
+                                "⬇️ Exporter résultats web (CSV)", csv_web,
+                                f"web_search_{web_query[:20]}.csv", "text/csv"
+                            )
+            except requests.exceptions.Timeout:
+                progress_bar.empty()
+                st.error("⏱️ Délai dépassé — l'API met trop de temps à répondre. Réessayez.")
+            except Exception as e:
+                progress_bar.empty()
+                st.error(f"Erreur : {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ONGLET 2 — BASE DE DONNÉES (Elasticsearch)
+    # ─────────────────────────────────────────────────────────────────────────
+    with tab_db:
+        st.markdown("Recherche dans les articles **déjà traités** par le pipeline (index Elasticsearch).")
+
+        cs1, cs2, cs3 = st.columns([4, 1, 1])
+        with cs1:
+            query = st.text_input("🔎 Requête",
+                                  placeholder="Ex: désinformation, Covid, élections, Ukraine...",
+                                  label_visibility="collapsed", key="db_search_input")
+        with cs2:
+            nb_results = st.selectbox("Résultats", [10, 20, 50],
+                                      label_visibility="collapsed", key="db_nb")
+        with cs3:
+            fake_filter_opt = st.selectbox("Filtrer", ["Tous", "Fake only", "Réel only"],
+                                           label_visibility="collapsed", key="db_filter")
+
+        fake_f = None
+        if fake_filter_opt == "Fake only":  fake_f = 1
+        if fake_filter_opt == "Réel only":  fake_f = 0
+
+        if query:
+            if query not in st.session_state["search_history"]:
+                st.session_state["search_history"].insert(0, query)
+                st.session_state["search_history"] = st.session_state["search_history"][:10]
+
+            with st.spinner("Recherche dans la base…"):
+                results = search_articles(query, size=nb_results, fake_filter=fake_f)
+
+            if results.empty:
+                st.warning(f"Aucun résultat dans la base pour **{query}**. "
+                           f"Essayez la **Recherche Web** pour analyser des articles sur internet.")
+            else:
+                total_r = len(results)
+                fakes_r = int(results["is_fake"].sum()) if "is_fake" in results.columns else 0
+                reals_r = total_r - fakes_r
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Résultats", total_r)
+                c2.metric("🔴 Faux", fakes_r)
+                c3.metric("🟢 Vrais", reals_r)
+                if fakes_r + reals_r > 0:
+                    c4.metric("Taux fake", f"{fakes_r/(fakes_r+reals_r)*100:.1f}%")
+
+                st.markdown("---")
+                cr1, cr2 = st.columns([1, 1])
+                with cr1:
+                    if "p_fake" in results.columns:
+                        fig_sc = px.scatter(
+                            results, x=results.index, y="p_fake", color="is_fake",
+                            color_discrete_map={1: CLR_FAKE, 0: CLR_REAL},
+                            size="confidence" if "confidence" in results.columns else None,
+                            hover_data=["title"] if "title" in results.columns else [],
+                            labels={"p_fake": "Score Fake", "index": "Rang"},
+                            title=f"Scores — « {query} »", height=260
+                        )
+                        fig_sc.update_layout(margin=dict(t=40, b=5), showlegend=False)
+                        st.plotly_chart(fig_sc, use_container_width=True)
+                with cr2:
+                    wf_r = get_word_frequencies(results, n=15)
+                    if not wf_r.empty:
+                        fig_wr = px.bar(wf_r, x="fréquence", y="mot", orientation="h",
+                                        color="fréquence", color_continuous_scale="Blues",
+                                        title="Mots fréquents", height=260)
+                        fig_wr.update_layout(margin=dict(t=40, b=5), showlegend=False,
+                                             coloraxis_showscale=False,
+                                             yaxis=dict(autorange="reversed"))
+                        st.plotly_chart(fig_wr, use_container_width=True)
+
+                if not results.empty:
+                    csv_r = results.to_csv(index=False)
+                    st.download_button("⬇️ Exporter résultats (CSV)", csv_r,
+                                       f"recherche_{query[:20]}.csv", "text/csv")
+
+                st.markdown("---")
+                st.subheader("Résultats détaillés")
+                for _, row in results.iterrows():
+                    is_fake = row.get("is_fake", 0) == 1
+                    btxt    = "🔴 FAKE" if is_fake else "🟢 RÉEL"
+                    conf    = row.get("confidence", 0) * 100
+                    with st.expander(f"{btxt} {row.get('title','(sans titre)')[:85]}"):
+                        st.markdown(f"**Source :** {row.get('source','?')} | "
+                                    f"**Langue :** {row.get('language','?')} | "
+                                    f"**Confiance :** {conf:.1f}%")
+                        if row.get("url"):
+                            st.markdown(f"[🔗 Lien]({row.get('url')})")
+        else:
+            if st.session_state["search_history"]:
+                st.markdown("#### 🕐 Recherches récentes")
+                cols_h = st.columns(min(5, len(st.session_state["search_history"])))
+                for col, term in zip(cols_h, st.session_state["search_history"][:5]):
+                    col.markdown(f"""
+                    <div style='background:white;border-radius:8px;padding:10px;
+                                text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.1);
+                                font-size:0.85rem;'>{term}</div>
+                    """, unsafe_allow_html=True)
+                st.markdown("---")
+
+            st.markdown("#### 💡 Exemples de recherches")
+            examples = [("COVID-19","Pandémie"), ("élections","Politique"),
+                        ("Ukraine","Géopolitique"), ("vaccins","Santé"),
+                        ("deepfake","Technologie")]
+            cols_e = st.columns(len(examples))
+            for col, (term, cat) in zip(cols_e, examples):
+                with col:
+                    st.markdown(f"""
+                    <div style='background:white;border-radius:8px;padding:12px;
+                                text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>
+                      <div style='font-weight:600;'>{term}</div>
+                      <div style='font-size:0.75rem;color:#7F8C8D;'>{cat}</div>
+                    </div>""", unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

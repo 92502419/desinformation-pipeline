@@ -412,6 +412,7 @@ services:
       KAFKA_BROKER: kafka:29092
     volumes:
       - ./scripts:/app/scripts:ro
+      - ./models/onnx:/app/models/onnx:ro   # modèle ONNX pour inférence directe web-search
     healthcheck:
       test: ['CMD-SHELL', 'python3 -c "import urllib.request; r=urllib.request.urlopen(\"http://localhost:8000/health\"); exit(0 if r.status==200 else 1)" 2>/dev/null || exit 1']
       interval: 15s
@@ -421,10 +422,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
-          cpus: '0.5'
+          memory: 512M   # augmenté : ONNX inference (DistilBERT INT8 ≈ 180MB) + uvicorn
+          cpus: '0.75'
         reservations:
-          memory: 64M
+          memory: 192M
 
 
   # ════════════════════════════════════════════════════════
