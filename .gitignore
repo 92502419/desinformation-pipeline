@@ -48,6 +48,7 @@ Memoire_Master2_IBDIA_KOMOSSI_Sosso_v3.docx
 # ── Documents et scripts de présentation (usage local uniquement) ────────
 Guide_Presentation_Soutenance_KOMOSSI_Sosso.docx
 scripts/generate_presentation_guide.py
+scripts/update_documents.py
 
 # ── Packages apt téléchargés ────────────────────────────────────────────
 apt-get/
