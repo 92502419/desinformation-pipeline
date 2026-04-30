@@ -348,7 +348,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3G
+          memory: 3500M
           cpus: '2.0'
         reservations:
           memory: 1500M

@@ -1,5 +1,5 @@
 # producer/src/kafka_producer.py — Producteur Kafka complet
-import asyncio, feedparser, json, hashlib, logging, os
+import asyncio, feedparser, json, hashlib, logging, os, time
 from datetime import datetime
 from confluent_kafka import Producer
 from gdelt_client import fetch_gdelt_articles
@@ -33,7 +33,16 @@ def delivery_callback(err, msg):
     if err: log.error(f'Kafka delivery FAILED: {err}')
 
 
-seen_ids = set()  # Cache des articles déjà envoyés
+SEEN_TTL_SECS = int(os.getenv('RSS_DEDUP_TTL_SEC', 7200))  # 2h par défaut
+seen_ids: dict = {}  # {id: timestamp} — TTL pour permettre le recyclage des articles
+
+
+def _purge_seen_ids():
+    """Supprime les IDs plus anciens que SEEN_TTL_SECS."""
+    now = time.time()
+    expired = [k for k, t in seen_ids.items() if now - t > SEEN_TTL_SECS]
+    for k in expired:
+        del seen_ids[k]
 
 
 def send_article(article: dict):
@@ -41,9 +50,9 @@ def send_article(article: dict):
         (article.get('url','') + article.get('title','')).encode()
     ).hexdigest()
     if art_id in seen_ids: return 0
-    seen_ids.add(art_id)
-    # Garder seulement les 100 000 derniers IDs en mémoire
-    if len(seen_ids) > 100000: seen_ids.pop()
+    seen_ids[art_id] = time.time()
+    if len(seen_ids) > 10000:
+        _purge_seen_ids()
     article['id'] = art_id
     producer.produce(
         topic=TOPIC, key=art_id,

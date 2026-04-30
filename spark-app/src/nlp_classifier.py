@@ -3,7 +3,7 @@
 import os, torch, numpy as np
 from transformers import DistilBertTokenizerFast
 from onnxruntime import InferenceSession, SessionOptions
-from torch.optim import AdamW
+from torch.optim import SGD
 import torch.nn.functional as F
 
 
@@ -34,8 +34,8 @@ class ContinualDistilBERT:
             providers=['CPUExecutionProvider']
         )
         self.pt_model = DistilBertForSequenceClassification.from_pretrained(MODEL_PRETRAINED)
-        self.pt_model.train()
-        self.optimizer = AdamW(self.pt_model.parameters(), lr=ONLINE_LR_BASE, weight_decay=0.01)
+        self.pt_model.eval()  # eval par défaut — train() uniquement pendant online_update
+        self.optimizer = SGD(self.pt_model.parameters(), lr=ONLINE_LR_BASE, momentum=0.9, weight_decay=0.01)
 
         # Reservoirs SÉPARÉS — évite que le drift injector sature le buffer de fake
         self.reservoir_fake: list = []
@@ -51,16 +51,17 @@ class ContinualDistilBERT:
         return self.reservoir_fake + self.reservoir_real
 
     def predict(self, title: str, body: str = '') -> dict:
-        """Inférence ONNX INT8 (~5-6 ms) — ne modifie pas le modèle."""
+        """Inférence ONNX INT8 (~5-6 ms) — 100 % numpy, zéro tensor PyTorch."""
         text = f'{title[:200]} [SEP] {body[:100]}'
         enc  = self.tokenizer(text, max_length=128, padding='max_length',
                               truncation=True, return_tensors='np')
         logits = self.ort_session.run(None, {
             'input_ids':      enc['input_ids'].astype(np.int64),
             'attention_mask': enc['attention_mask'].astype(np.int64)
-        })[0]
-        probs = F.softmax(torch.tensor(logits), dim=-1).squeeze()
-        label = int(probs.argmax().item())
+        })[0][0]  # shape (2,)
+        e = np.exp(logits - logits.max())  # softmax numeriquement stable
+        probs = e / e.sum()
+        label = int(np.argmax(probs))
         return {'label': label, 'confidence': float(probs[label]), 'p_fake': float(probs[1])}
 
     def reservoir_update(self, text: str, label: int):
@@ -132,6 +133,7 @@ class ContinualDistilBERT:
         else:
             cw = None
 
+        self.pt_model.train()
         enc      = self.tokenizer(train_texts, max_length=128, padding='max_length',
                                   truncation=True, return_tensors='pt')
         labels_t = torch.tensor(train_labels, dtype=torch.long)
@@ -143,6 +145,8 @@ class ContinualDistilBERT:
         self.optimizer.step()
         loss_val = float(loss.item())
         del enc, labels_t, out, loss
+        self.optimizer.zero_grad(set_to_none=True)  # libère la mémoire des gradients
+        self.pt_model.eval()  # repasse en eval pour libérer les buffers d'activation
         return loss_val
 
 

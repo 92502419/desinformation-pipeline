@@ -1,5 +1,5 @@
 # spark-app/src/spark_streaming.py — Job Spark Structured Streaming principal
-import os, json, logging
+import os, json, logging, time
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col
 from pyspark.sql.types import (
@@ -79,7 +79,7 @@ df_raw = spark.readStream \
     .option('kafka.bootstrap.servers', os.getenv('KAFKA_BROKER', 'kafka:29092')) \
     .option('subscribe', os.getenv('KAFKA_TOPIC_RAW', 'raw-news-stream')) \
     .option('startingOffsets', 'earliest') \
-    .option('maxOffsetsPerTrigger', '200') \
+    .option('maxOffsetsPerTrigger', '100') \
     .option('failOnDataLoss', 'false') \
     .load()
 
@@ -113,10 +113,12 @@ drift_producer = KafkaProducer({'bootstrap.servers': os.getenv('KAFKA_BROKER', '
 
 # ── TRAITEMENT PAR BATCH ──────────────────────────────────
 def process_batch(batch_df, batch_id):
+    t0 = time.time()
     rows = batch_df.collect()
     if not rows:
         return
-    log.info(f'Batch {batch_id}: {len(rows)} articles')
+    t_collect = time.time()
+    log.info(f'Batch {batch_id}: {len(rows)} articles | collect={t_collect-t0:.1f}s')
 
     batch_texts, batch_labels, batch_docs = [], [], []
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -157,12 +159,18 @@ def process_batch(batch_df, batch_id):
         batch_labels.append(pred['label'])
         nlp_model.reservoir_update(text, pred['label'])
 
+    t_loop = time.time()
+    log.info(f'Batch {batch_id}: boucle inference={t_loop-t_collect:.1f}s ({(t_loop-t_collect)/len(rows)*1000:.0f}ms/article)')
+
     # 5. Online learning via OnlineTrainer
+    t_train_start = time.time()
     train_metrics = trainer.step(batch_texts, batch_labels)
+    t_train_end = time.time()
     log.info(
         f'Online loss: {train_metrics["loss"]:.4f} | '
         f'lr: {train_metrics["lr"]:.2e} | '
-        f'drift: {drift_monitor.is_drift_active()}'
+        f'drift: {drift_monitor.is_drift_active()} | '
+        f'train={t_train_end-t_train_start:.1f}s'
     )
 
     # 6. Émission d'une alerte + stockage si dérive détectée

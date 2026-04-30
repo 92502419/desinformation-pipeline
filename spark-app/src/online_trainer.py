@@ -5,7 +5,8 @@ import os
 
 log = logging.getLogger(__name__)
 
-SYNC_EVERY_N_BATCHES = int(os.getenv('SYNC_ONNX_EVERY', 100))
+SYNC_EVERY_N_BATCHES  = int(os.getenv('SYNC_ONNX_EVERY', 100))
+TRAIN_EVERY_N_BATCHES = int(os.getenv('ONLINE_TRAIN_EVERY_N', 5))  # entraîne 1x/5 batches
 
 
 class OnlineTrainer:
@@ -26,16 +27,22 @@ class OnlineTrainer:
     def step(self, batch_texts: list, batch_labels: list) -> dict:
         """
         Effectue un pas d'entraînement online sur un batch.
-        Retourne les métriques du pas.
+        Entraîne seulement tous les TRAIN_EVERY_N_BATCHES batches pour éviter le swap.
         """
-        if not batch_texts:
+        self.batch_count += 1
+        self.total_examples += len(batch_texts)
+
+        if not batch_texts or (self.batch_count % TRAIN_EVERY_N_BATCHES != 0):
+            log.info(
+                f'[OnlineTrainer] Batch {self.batch_count} | skip_train '
+                f'(next train: batch {((self.batch_count // TRAIN_EVERY_N_BATCHES) + 1) * TRAIN_EVERY_N_BATCHES}) | '
+                f'examples={self.total_examples}'
+            )
             return {'loss': 0.0, 'lr': self.drift.get_recommended_lr(), 'batch': self.batch_count}
 
         lr = self.drift.get_recommended_lr()
         loss = self.nlp.online_update(batch_texts, batch_labels, lr=lr)
 
-        self.batch_count += 1
-        self.total_examples += len(batch_texts)
         self.total_loss += loss
 
         log.info(
