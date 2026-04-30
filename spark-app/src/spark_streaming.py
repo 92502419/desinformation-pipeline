@@ -33,6 +33,11 @@ _builder = SparkSession.builder \
     .config('spark.sql.shuffle.partitions', '2') \
     .config('spark.driver.memory', _driver_memory) \
     .config('spark.driver.maxResultSize', '256m') \
+    .config('spark.driver.extraJavaOptions',
+            '-XX:+UseG1GC -XX:G1HeapRegionSize=4m '
+            '-XX:MaxGCPauseMillis=500 -XX:InitiatingHeapOccupancyPercent=35 '
+            '-XX:+ExplicitGCInvokesConcurrent '
+            '-Djava.net.preferIPv4Stack=true') \
     .config('spark.serializer', 'org.apache.spark.serializer.KryoSerializer') \
     .config('spark.sql.streaming.forceDeleteTempCheckpointLocation', 'true') \
     .config('spark.python.worker.memory', '256m') \
@@ -74,7 +79,7 @@ df_raw = spark.readStream \
     .option('kafka.bootstrap.servers', os.getenv('KAFKA_BROKER', 'kafka:29092')) \
     .option('subscribe', os.getenv('KAFKA_TOPIC_RAW', 'raw-news-stream')) \
     .option('startingOffsets', 'earliest') \
-    .option('maxOffsetsPerTrigger', '1000') \
+    .option('maxOffsetsPerTrigger', '200') \
     .option('failOnDataLoss', 'false') \
     .load()
 
