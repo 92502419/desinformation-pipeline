@@ -12,7 +12,7 @@ enableXsrfProtection = true
 maxUploadSize = 10
 
 [client]
-showErrorDetails = false
+showErrorDetails = true
 toolbarMode = "minimal"
 
 [runner]

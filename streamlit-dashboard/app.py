@@ -222,6 +222,8 @@ def fetch_articles(limit=100, fake_only=False, real_only=False, source_filter=No
         return pd.DataFrame()
 
 def fetch_virality(hours=24):
+    if not API_BASE:
+        return []
     try:
         r = requests.get(f"{API_BASE}/api/v1/articles/virality?hours={hours}", timeout=10)
         return r.json().get("trend", []) if r.ok else []
@@ -282,8 +284,13 @@ def save_alert_event(alert_doc):
         pass
 
 def check_services():
-    # Depuis l'intérieur du conteneur Docker, on utilise les noms de service
-    # internes au réseau Docker (pas localhost qui pointe sur le conteneur Streamlit lui-même)
+    # Sur Streamlit Cloud aucun service Docker n'est disponible : retour immédiat
+    if _IS_CLOUD:
+        return {name: False for name in [
+            "Zookeeper", "Kafka", "MongoDB", "Elasticsearch",
+            "FastAPI", "Kafdrop", "Grafana", "Streamlit"
+        ]}
+    # Depuis l'intérieur du conteneur Docker, on utilise les noms de service internes
     targets = {
         "Zookeeper":     ("zookeeper",     2181),
         "Kafka":         ("kafka",         29092),
@@ -447,7 +454,15 @@ with st.sidebar:
     st.markdown(f"<div style='font-size:0.68rem;opacity:0.5;margin-top:12px;'>v2.0 · {datetime.now().strftime('%H:%M:%S')}</div>",
                 unsafe_allow_html=True)
 
-    if not _backend_ok():
+    if _IS_CLOUD:
+        st.markdown("""
+        <div style='background:rgba(52,152,219,0.25);border-radius:6px;padding:8px 10px;
+                    margin-top:10px;font-size:0.75rem;'>
+            🌐 <b>Mode Démo</b><br>Interface sans données live<br>
+            <span style='opacity:0.8;'>Le pipeline tourne en local</span>
+        </div>
+        """, unsafe_allow_html=True)
+    elif not _backend_ok():
         st.markdown("""
         <div style='background:rgba(231,76,60,0.2);border-radius:6px;padding:8px 10px;
                     margin-top:10px;font-size:0.75rem;'>
