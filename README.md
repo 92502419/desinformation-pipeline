@@ -30,7 +30,7 @@
 │          SPARK STREAMING (local[2]) — Continual-DistilBERT              │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
 │  │  ONNX INT8 Infer │  │  Tri-Détecteur   │  │  Online Learning v2   │  │
-│  │  ~5-6 ms/article │  │  ADWIN(0.45)     │  │  PyTorch AdamW        │  │
+│  │  ~5-6 ms/article │  │  ADWIN(0.45)     │  │  PyTorch SGD          │  │
 │  │  DistilBERT-ml   │  │  KSWIN(0.35)     │  │  Reservoir 50/50      │  │
 │  │                  │  │  PageHinkley(0.20│  │  ONNX sync/100 batch  │  │
 │  └──────────────────┘  └──────────────────┘  └───────────────────────┘  │

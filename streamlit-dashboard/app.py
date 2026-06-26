@@ -809,7 +809,7 @@ elif "Recherche" in page:
 
         st.markdown("")
 
-        if web_query and (web_btn or web_query):
+        if web_btn and web_query:
             if web_query not in st.session_state["search_history"]:
                 st.session_state["search_history"].insert(0, web_query)
                 st.session_state["search_history"] = st.session_state["search_history"][:10]
@@ -1590,7 +1590,7 @@ elif "Infrastructure" in page:
       <div class="arch-item">
         <div class="icon">🔄</div>
         <div class="name">Online Learning</div>
-        <div class="desc">Reservoir 5 000<br>PyTorch AdamW</div>
+        <div class="desc">Reservoir 5 000<br>PyTorch SGD</div>
         <span class="badge">continual learning</span>
       </div>
     </div>

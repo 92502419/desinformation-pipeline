@@ -85,7 +85,7 @@ def _classify(texts: list[str]) -> list[dict]:
         probs  = _softmax(logits)
         p_fake = float(probs[1])
         results.append({
-            "is_fake":    1 if p_fake >= 0.5 else 0,
+            "is_fake":    1 if p_fake >= 0.65 else 0,
             "confidence": round(float(max(probs)), 4),
             "p_fake":     round(p_fake, 4),
         })

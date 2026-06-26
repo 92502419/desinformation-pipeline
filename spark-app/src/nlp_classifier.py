@@ -61,7 +61,7 @@ class ContinualDistilBERT:
         })[0][0]  # shape (2,)
         e = np.exp(logits - logits.max())  # softmax numeriquement stable
         probs = e / e.sum()
-        label = int(np.argmax(probs))
+        label = 1 if float(probs[1]) >= 0.65 else 0
         return {'label': label, 'confidence': float(probs[label]), 'p_fake': float(probs[1])}
 
     def reservoir_update(self, text: str, label: int):
