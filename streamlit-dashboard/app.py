@@ -4,8 +4,8 @@ Auteur   : KOMOSSI Sosso — Master BIG DATA IA, UCAO UUT 2025-2026
 Encadrant: M. TCHANTCHO Leri & M. BABA Kpatcha
 """
 
-import os, time, socket, requests
-from datetime import datetime, timezone
+import os, time, socket, requests, random as _rnd
+from datetime import datetime, timezone, timedelta
 
 import streamlit as st
 
@@ -88,6 +88,67 @@ DEFAULT_THRESHOLDS = {
     "conf_low":          0.70,
     "silence_minutes":   15,
 }
+
+# ── Données de démonstration (Mode Cloud uniquement) ─────────────────────────
+_rnd.seed(42)
+_D = datetime.now(timezone.utc)
+
+_DEMO_STATS = {
+    "total_articles": 1847, "fake_articles": 612, "real_articles": 1235,
+    "fake_rate": 33.1, "drift_events": 3, "articles_last_hour": 47
+}
+
+_DEMO_ARTICLES_RAW = [
+    {"id":"d01","title":"AFP : Le sommet de l'Union Africaine s'ouvre à Addis-Abeba","body":"Addis-Abeba (AFP) — Les chefs d'État africains se réunissent pour le 37e sommet de l'UA.","url":"https://www.afp.com","source":"AFP","language":"fr","is_fake":0,"confidence":0.94,"p_fake":0.06,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(minutes=5)).isoformat()},
+    {"id":"d02","title":"Reuters: African Union summit opens in Addis Ababa","body":"ADDIS ABABA (Reuters) - Leaders gather for the 37th African Union summit on security.","url":"https://www.reuters.com","source":"Reuters","language":"en","is_fake":0,"confidence":0.91,"p_fake":0.09,"drift_score":0.03,"drift_active":False,"processed_at":(_D-timedelta(minutes=12)).isoformat()},
+    {"id":"d03","title":"RFI : L'épidémie de mpox recule dans l'est de la RDC selon l'OMS","body":"Kinshasa - L'OMS indique une baisse de 18 % des nouveaux cas de mpox cette semaine.","url":"https://www.rfi.fr","source":"RFI","language":"fr","is_fake":0,"confidence":0.89,"p_fake":0.11,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(minutes=20)).isoformat()},
+    {"id":"d04","title":"BBC : Mali military government extends political transition period","body":"BAMAKO (BBC) - Mali's transitional government announced a 24-month extension.","url":"https://www.bbc.com","source":"BBC","language":"en","is_fake":0,"confidence":0.87,"p_fake":0.13,"drift_score":0.04,"drift_active":False,"processed_at":(_D-timedelta(minutes=35)).isoformat()},
+    {"id":"d05","title":"AFP : Les négociations de paix au Soudan reprennent à Djibouti","body":"Djibouti (AFP) — Des représentants des deux camps en guerre reprennent les pourparlers.","url":"https://www.afp.com","source":"AFP","language":"fr","is_fake":0,"confidence":0.92,"p_fake":0.08,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(minutes=48)).isoformat()},
+    {"id":"d06","title":"Reuters: IMF approves $600 million loan to support Ivory Coast economy","body":"WASHINGTON (Reuters) - The IMF executive board approved the loan to Côte d'Ivoire.","url":"https://www.reuters.com","source":"Reuters","language":"en","is_fake":0,"confidence":0.96,"p_fake":0.04,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(hours=1,minutes=10)).isoformat()},
+    {"id":"d07","title":"RFI : Sénégal — le gouvernement présente un plan d'urgence économique","body":"Dakar (RFI) — Le président Bassirou Diomaye Faye détaille le plan de 500 milliards FCFA.","url":"https://www.rfi.fr","source":"RFI","language":"fr","is_fake":0,"confidence":0.90,"p_fake":0.10,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(hours=1,minutes=30)).isoformat()},
+    {"id":"d08","title":"AFP : Attaque repoussée par les forces de sécurité au Burkina Faso","body":"Ouagadougou (AFP) — Les forces armées ont neutralisé un groupe armé à la frontière malienne.","url":"https://www.afp.com","source":"AFP","language":"fr","is_fake":0,"confidence":0.88,"p_fake":0.12,"drift_score":0.05,"drift_active":False,"processed_at":(_D-timedelta(hours=2)).isoformat()},
+    {"id":"d09","title":"BBC : Kenya raises minimum wage by 10 percent amid cost-of-living crisis","body":"NAIROBI (BBC) - The government announced the wage increase to help low-income workers.","url":"https://www.bbc.com","source":"BBC","language":"en","is_fake":0,"confidence":0.93,"p_fake":0.07,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(hours=2,minutes=30)).isoformat()},
+    {"id":"d10","title":"EXCLUSIF: Des médecins révèlent que le vaccin mpox contient des micropuces de traçage 5G","body":"Des chercheurs indépendants affirment avoir découvert des nanotechnologies dans les vaccins distribués en Afrique.","url":"https://fake-blog.example","source":"Blog inconnu","language":"fr","is_fake":1,"confidence":0.97,"p_fake":0.97,"drift_score":0.62,"drift_active":True,"processed_at":(_D-timedelta(hours=3)).isoformat()},
+    {"id":"d11","title":"CHOC: Le Niger aurait signé un accord secret pour vendre son uranium à la Russie","body":"Une source anonyme non vérifiée révèle qu'un accord secret entre Niamey et Moscou a été signé.","url":"https://fake-blog.example","source":"Réseau social","language":"fr","is_fake":1,"confidence":0.95,"p_fake":0.95,"drift_score":0.58,"drift_active":True,"processed_at":(_D-timedelta(hours=3,minutes=30)).isoformat()},
+    {"id":"d12","title":"Reuters: Ethiopia's parliament approves landmark electoral reform law","body":"ADDIS ABABA (Reuters) - The new law will allow independent candidates for the first time.","url":"https://www.reuters.com","source":"Reuters","language":"en","is_fake":0,"confidence":0.91,"p_fake":0.09,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(hours=4)).isoformat()},
+    {"id":"d13","title":"ALERTE: Un chercheur prouve que le COVID-19 a été fabriqué avec des fonds africains","body":"Selon un document non vérifié circulant sur les réseaux sociaux, des laboratoires africains seraient impliqués.","url":"https://fake-blog.example","source":"Inconnu","language":"fr","is_fake":1,"confidence":0.93,"p_fake":0.93,"drift_score":0.71,"drift_active":True,"processed_at":(_D-timedelta(hours=4,minutes=20)).isoformat()},
+    {"id":"d14","title":"RFI : Le Tchad et la France signent un accord de défense renforcé","body":"N'Djamena (RFI) — Un nouvel accord bilatéral de défense a été signé entre Ndjamena et Paris.","url":"https://www.rfi.fr","source":"RFI","language":"fr","is_fake":0,"confidence":0.86,"p_fake":0.14,"drift_score":0.03,"drift_active":False,"processed_at":(_D-timedelta(hours=5)).isoformat()},
+    {"id":"d15","title":"BREAKING: Scientists discover miracle cure that eliminates AIDS in 48 hours","body":"Revolutionary treatment developed in undisclosed laboratory said to cure HIV/AIDS completely.","url":"https://fake-blog.example","source":"Unknown Blog","language":"en","is_fake":1,"confidence":0.98,"p_fake":0.98,"drift_score":0.88,"drift_active":True,"processed_at":(_D-timedelta(hours=5,minutes=30)).isoformat()},
+    {"id":"d16","title":"AFP : La CEDEAO lève partiellement les sanctions économiques contre le Niger","body":"Abuja (AFP) — La Communauté économique des États décide d'alléger les sanctions commerciales.","url":"https://www.afp.com","source":"AFP","language":"fr","is_fake":0,"confidence":0.89,"p_fake":0.11,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(hours=6)).isoformat()},
+    {"id":"d17","title":"BBC : Rwanda records 7.2% GDP growth despite regional instability","body":"KIGALI (BBC) - Rwanda's economy outperformed regional neighbors with strong growth figures.","url":"https://www.bbc.com","source":"BBC","language":"en","is_fake":0,"confidence":0.92,"p_fake":0.08,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(hours=6,minutes=45)).isoformat()},
+    {"id":"d18","title":"URGENT: Le gouvernement togolais dissout tous les partis d'opposition","body":"Information non vérifiée circulant sur WhatsApp — aucune confirmation officielle.","url":"https://fake-blog.example","source":"WhatsApp","language":"fr","is_fake":1,"confidence":0.96,"p_fake":0.96,"drift_score":0.65,"drift_active":True,"processed_at":(_D-timedelta(hours=7)).isoformat()},
+    {"id":"d19","title":"Reuters: Nigeria's central bank raises rates to 26.25% to fight inflation","body":"ABUJA (Reuters) - The central bank raised its benchmark interest rate for the fourth time.","url":"https://www.reuters.com","source":"Reuters","language":"en","is_fake":0,"confidence":0.94,"p_fake":0.06,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(hours=7,minutes=30)).isoformat()},
+    {"id":"d20","title":"RFI : Somalie — l'armée nationale reprend le contrôle de deux villes stratégiques","body":"Mogadiscio (RFI) — L'armée somalienne a chassé les militants d'Al-Shabaab de Baidoa et Kismayo.","url":"https://www.rfi.fr","source":"RFI","language":"fr","is_fake":0,"confidence":0.88,"p_fake":0.12,"drift_score":0.04,"drift_active":False,"processed_at":(_D-timedelta(hours=8)).isoformat()},
+]
+
+_DEMO_TREND = [
+    {"_id": (_D-timedelta(hours=h)).strftime("%Y-%m-%d-%H"),
+     "total": _rnd.randint(35, 85),
+     "fakes": _rnd.randint(8, 28)}
+    for h in range(23, -1, -1)
+]
+
+_DEMO_DRIFT = [
+    {"timestamp": (_D-timedelta(hours=2,minutes=15)).isoformat(), "composite_score": 0.72,
+     "drift_confirmed": True, "signals": {"ADWIN": True, "KSWIN": True, "PageHinkley": False},
+     "recommended_lr": 5e-5, "batch_num": 847},
+    {"timestamp": (_D-timedelta(hours=8,minutes=30)).isoformat(), "composite_score": 0.45,
+     "drift_confirmed": False, "signals": {"ADWIN": True, "KSWIN": False, "PageHinkley": False},
+     "recommended_lr": 2e-5, "batch_num": 623},
+    {"timestamp": (_D-timedelta(hours=18)).isoformat(), "composite_score": 0.38,
+     "drift_confirmed": False, "signals": {"ADWIN": False, "KSWIN": True, "PageHinkley": False},
+     "recommended_lr": 1e-5, "batch_num": 412},
+]
+
+def _demo_articles_filtered(limit=100, fake_only=False, real_only=False,
+                             source_filter=None, conf_min=0.0, drift_only=False):
+    df = pd.DataFrame(_DEMO_ARTICLES_RAW)
+    if fake_only:      df = df[df["is_fake"] == 1]
+    if real_only:      df = df[df["is_fake"] == 0]
+    if source_filter:  df = df[df["source"] == source_filter]
+    if conf_min > 0:   df = df[df["confidence"] >= conf_min]
+    if drift_only:     df = df[df["drift_active"] == True]
+    return df.head(limit).reset_index(drop=True)
 
 st.markdown("""
 <style>
@@ -182,7 +243,7 @@ def _backend_ok():
 @st.cache_data(ttl=20, show_spinner=False)
 def fetch_stats():
     if not API_BASE:
-        return {}
+        return _DEMO_STATS if _IS_CLOUD else {}
     try:
         r = requests.get(f"{API_BASE}/api/v1/stats", timeout=3)
         return r.json() if r.ok else {}
@@ -192,7 +253,8 @@ def fetch_stats():
 @st.cache_data(ttl=20, show_spinner=False)
 def fetch_health():
     if not API_BASE:
-        return {}
+        return {"status": "demo", "mongo": "up", "elasticsearch": "up",
+                "timestamp": datetime.now(timezone.utc).isoformat()} if _IS_CLOUD else {}
     try:
         r = requests.get(f"{API_BASE}/health", timeout=3)
         return r.json() if r.ok else {}
@@ -201,6 +263,8 @@ def fetch_health():
 
 def fetch_articles(limit=100, fake_only=False, real_only=False, source_filter=None,
                    conf_min=0.0, drift_only=False):
+    if _IS_CLOUD:
+        return _demo_articles_filtered(limit, fake_only, real_only, source_filter, conf_min, drift_only)
     db = get_mongo()
     if db is None:
         return pd.DataFrame()
@@ -223,7 +287,7 @@ def fetch_articles(limit=100, fake_only=False, real_only=False, source_filter=No
 
 def fetch_virality(hours=24):
     if not API_BASE:
-        return []
+        return _DEMO_TREND if _IS_CLOUD else []
     try:
         r = requests.get(f"{API_BASE}/api/v1/articles/virality?hours={hours}", timeout=10)
         return r.json().get("trend", []) if r.ok else []
@@ -231,6 +295,8 @@ def fetch_virality(hours=24):
         return []
 
 def fetch_drift_events(limit=50):
+    if _IS_CLOUD:
+        return _DEMO_DRIFT[:limit]
     db = get_mongo()
     if db is None:
         return []
@@ -241,6 +307,8 @@ def fetch_drift_events(limit=50):
         return []
 
 def search_articles(query_text, size=20, fake_filter=None):
+    if _IS_CLOUD:
+        return _demo_articles_filtered(size, fake_only=(fake_filter==1), real_only=(fake_filter==0))
     es = get_es()
     if es is None:
         return pd.DataFrame()
@@ -458,8 +526,8 @@ with st.sidebar:
         st.markdown("""
         <div style='background:rgba(52,152,219,0.25);border-radius:6px;padding:8px 10px;
                     margin-top:10px;font-size:0.75rem;'>
-            🌐 <b>Mode Démo</b><br>Interface sans données live<br>
-            <span style='opacity:0.8;'>Le pipeline tourne en local</span>
+            🌐 <b>Mode Démo</b><br>Données de démonstration<br>
+            <span style='opacity:0.8;'>Pipeline complet disponible en local</span>
         </div>
         """, unsafe_allow_html=True)
     elif not _backend_ok():
@@ -828,6 +896,53 @@ elif "Recherche" in page:
             if web_query not in st.session_state["search_history"]:
                 st.session_state["search_history"].insert(0, web_query)
                 st.session_state["search_history"] = st.session_state["search_history"][:10]
+
+            # ── MODE DÉMO (Streamlit Cloud) ───────────────────────────────────
+            if _IS_CLOUD:
+                _demo_web = [
+                    {"title": f"AFP : Analyse approfondie — {web_query}", "is_fake": 0, "confidence": 0.91, "p_fake": 0.09, "source": "AFP", "url": "https://www.afp.com", "body": f"Dakar (AFP) — Plusieurs sources officielles confirment les derniers développements concernant {web_query}."},
+                    {"title": f"RFI : Le point sur la situation — {web_query}", "is_fake": 0, "confidence": 0.88, "p_fake": 0.12, "source": "RFI", "url": "https://www.rfi.fr", "body": f"Paris (RFI) — Notre correspondant fait le point sur {web_query} après consultation des autorités compétentes."},
+                    {"title": f"EXCLUSIF : Ce que les médias cachent sur {web_query}", "is_fake": 1, "confidence": 0.95, "p_fake": 0.95, "source": "Blog anonyme", "url": "#", "body": f"Des sources anonymes révèlent une vérité choquante sur {web_query} que le gouvernement veut cacher."},
+                    {"title": f"Reuters: International reaction to {web_query}", "is_fake": 0, "confidence": 0.93, "p_fake": 0.07, "source": "Reuters", "url": "https://www.reuters.com", "body": f"LONDON (Reuters) - World leaders react to recent developments regarding {web_query}."},
+                    {"title": f"CHOC : La vérité cachée sur {web_query} enfin révélée !", "is_fake": 1, "confidence": 0.97, "p_fake": 0.97, "source": "Source inconnue", "url": "#", "body": f"Un lanceur d'alerte révèle des informations explosives sur {web_query} qui vont tout changer."},
+                    {"title": f"BBC : Coverage of latest {web_query} developments", "is_fake": 0, "confidence": 0.90, "p_fake": 0.10, "source": "BBC", "url": "https://www.bbc.com", "body": f"LONDON (BBC) - Our correspondents report on the latest {web_query} situation from multiple sources."},
+                    {"title": f"AFP : Réaction des organisations internationales face à {web_query}", "is_fake": 0, "confidence": 0.89, "p_fake": 0.11, "source": "AFP", "url": "https://www.afp.com", "body": f"Genève (AFP) — L'ONU et l'Union africaine publient un communiqué conjoint sur {web_query}."},
+                    {"title": f"URGENT : {web_query} — révélation explosive d'un insider", "is_fake": 1, "confidence": 0.94, "p_fake": 0.94, "source": "WhatsApp", "url": "#", "body": f"Un initié révèle ce qu'on ne vous dit pas sur {web_query}. Partagez avant censure !"},
+                ][:web_limit]
+                _cl_fake  = sum(1 for a in _demo_web if a["is_fake"] == 1)
+                _cl_real  = len(_demo_web) - _cl_fake
+                _cl_fpct  = _cl_fake / len(_demo_web) * 100
+                k1, k2, k3, k4, k5 = st.columns(5)
+                k1.metric("Trouvés sur le web", len(_demo_web))
+                k2.metric("Classifiés", len(_demo_web))
+                k3.metric("🔴 Fake", _cl_fake)
+                k4.metric("🟢 Réels", _cl_real)
+                k5.metric("Taux fake", f"{_cl_fpct:.1f}%",
+                          delta="⚠️ Élevé" if _cl_fpct > 50 else "✅ Normal",
+                          delta_color="inverse" if _cl_fpct > 50 else "normal")
+                st.info("🌐 Mode Démo — résultats simulés pour illustrer la classification en temps réel.")
+                st.markdown("---")
+                _df_demo_web = pd.DataFrame(_demo_web)
+                _df_demo_web["label"] = _df_demo_web["is_fake"].map({1: "🔴 FAKE", 0: "🟢 RÉEL"})
+                _df_demo_web["titre_court"] = _df_demo_web["title"].str[:50]
+                fig_web_d = px.bar(_df_demo_web, x="titre_court", y="p_fake", color="label",
+                                   color_discrete_map={"🔴 FAKE": CLR_FAKE, "🟢 RÉEL": CLR_REAL},
+                                   title=f"Score de désinformation — « {web_query} »",
+                                   labels={"p_fake": "Probabilité fake", "titre_court": "Article"}, height=280)
+                fig_web_d.add_hline(y=0.65, line_dash="dash", line_color="orange", annotation_text="Seuil 0.65")
+                fig_web_d.update_layout(margin=dict(t=40, b=5), xaxis_tickangle=-30, showlegend=True)
+                st.plotly_chart(fig_web_d, use_container_width=True)
+                st.markdown("---")
+                st.subheader("Résultats détaillés")
+                for art in _demo_web:
+                    _badge = "🔴 FAKE" if art["is_fake"] else "🟢 RÉEL"
+                    with st.expander(f"{_badge} {art['title'][:85]}"):
+                        st.markdown(f"**Source :** {art['source']} | **Confiance :** {art['confidence']*100:.1f}% | **P(fake) :** {art['p_fake']*100:.1f}%")
+                        st.markdown(art["body"])
+                        if art["url"] != "#":
+                            st.markdown(f"[🔗 Lien]({art['url']})")
+                st.stop()
+            # ─────────────────────────────────────────────────────────────────
 
             progress_bar = st.progress(0, text="Recherche sur internet…")
             status_area  = st.empty()
