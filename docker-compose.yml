@@ -431,20 +431,35 @@ services:
 
   # ════════════════════════════════════════════════════════
   # DRIFT INJECTOR — Service de simulation de Concept Drift
-  # Démarre automatiquement avec docker compose up -d
   #
-  # Mode daemon : attend 90s au démarrage (pipeline warm-up),
-  # puis injecte le scénario B toutes les 15 minutes.
+  # Mode par défaut : DÉSACTIVÉ (restart: no + sleep infini)
+  # → Le drift est déclenché MANUELLEMENT depuis le dashboard Streamlit
+  #   (page "Drift & Apprentissage" → bouton "Lancer la simulation")
+  #   OU via l'API : POST /api/v1/drift/inject?scenario=B
   #
-  # Exécution manuelle one-shot depuis l'hôte :
-  #   python scripts/inject_drift_simulation.py --scenario B
+  # Pourquoi désactivé par défaut ?
+  #   → Le mode daemon permanent biaisait le modèle en ligne vers "fake"
+  #      car il injectait 90% de fake toutes les 30 min en continu.
+  #   → La simulation doit être ponctuelle et suivie d'une récupération.
+  #
+  # Pour réactiver le mode daemon (soutenance, démo) :
+  #   Remplacer le entrypoint ci-dessous par :
+  #     - python
+  #     - /app/scripts/inject_drift_simulation.py
+  #     - "--daemon"
+  #     - "--scenario"
+  #     - "B"
+  #     - "--initial-delay"
+  #     - "120"
+  #     - "--interval"
+  #     - "3600"
   # ════════════════════════════════════════════════════════
   drift-injector:
     build:
       context: ./producer
       dockerfile: Dockerfile
     container_name: drift-injector
-    restart: unless-stopped
+    restart: 'no'
     depends_on:
       kafka:
         condition: service_healthy
@@ -455,15 +470,9 @@ services:
     volumes:
       - ./scripts:/app/scripts:ro
     entrypoint:
-      - python
-      - /app/scripts/inject_drift_simulation.py
-      - "--daemon"
-      - "--scenario"
-      - "B"
-      - "--initial-delay"
-      - "120"
-      - "--interval"
-      - "1800"
+      - /bin/sh
+      - -c
+      - "echo 'Drift injector en attente — utilisez le dashboard Streamlit ou POST /api/v1/drift/inject pour déclencher une simulation manuelle.' && sleep infinity"
     deploy:
       resources:
         limits:

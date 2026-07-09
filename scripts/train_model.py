@@ -25,14 +25,18 @@ if not os.path.exists('scripts/train_model.py'):
 
 # ── Arguments ───────────────────────────────────────────────
 parser = argparse.ArgumentParser()
-parser.add_argument('--epochs',     type=int,   default=10)
-parser.add_argument('--batch_size', type=int,   default=16,  help='16 recommandé sur CPU')
-parser.add_argument('--lr',         type=float, default=2e-5)
-parser.add_argument('--max_len',    type=int,   default=128)
-parser.add_argument('--model_name', default='distilbert-base-multilingual-cased')
-parser.add_argument('--output_dir', default='models/pretrained')
-parser.add_argument('--train_csv',  default='data/processed/train/train.csv')
-parser.add_argument('--val_csv',    default='data/processed/val/val.csv')
+parser.add_argument('--epochs',       type=int,   default=10)
+parser.add_argument('--batch_size',   type=int,   default=16,  help='16 recommandé sur CPU')
+parser.add_argument('--lr',           type=float, default=2e-5)
+parser.add_argument('--max_len',      type=int,   default=128)
+parser.add_argument('--model_name',   default='distilbert-base-multilingual-cased')
+parser.add_argument('--output_dir',   default='models/pretrained')
+parser.add_argument('--train_csv',    default='data/processed/train/train.csv')
+parser.add_argument('--val_csv',      default='data/processed/val/val.csv')
+parser.add_argument('--africa_boost', type=float, default=5.0,
+                    help='Facteur multiplicateur pour les exemples africains dans le sampler')
+parser.add_argument('--save_every',   type=int,   default=100,
+                    help="Sauvegarde un checkpoint de reprise tous les N batchs (résilience CPU longue durée)")
 args = parser.parse_args()
 
 
@@ -52,17 +56,24 @@ for path in [args.train_csv, args.val_csv]:
         sys.exit(1)
 
 
+# ── Sources africaines reconnues ─────────────────────────────
+AFRICA_SOURCES = {
+    'africa_news', 'synthetic_africa', 'masakhane',
+    'Africa Check', 'Africa Check FR',
+    'RFI', 'BBC', 'Jeune Afrique', 'AFP', 'Reuters',
+}
+
 # ── Dataset ─────────────────────────────────────────────────
 class NewsDataset(Dataset):
     def __init__(self, csv_path, tokenizer, max_len=128):
         self.df = pd.read_csv(csv_path).fillna('')
-        self.df['label'] = self.df['label'].astype(int)  # Forcer int
+        self.df['label'] = self.df['label'].astype(int)
+        if 'source' not in self.df.columns:
+            self.df['source'] = 'unknown'
         self.tokenizer = tokenizer
         self.max_len   = max_len
 
-
     def __len__(self): return len(self.df)
-
 
     def __getitem__(self, idx):
         row  = self.df.iloc[idx]
@@ -73,7 +84,6 @@ class NewsDataset(Dataset):
         return {
             'input_ids':      enc['input_ids'].squeeze(),
             'attention_mask': enc['attention_mask'].squeeze(),
-            # ✅ FIX : dtype=torch.long OBLIGATOIRE pour CrossEntropyLoss
             'labels': torch.tensor(int(row['label']), dtype=torch.long)
         }
 
@@ -99,10 +109,25 @@ print('Chargement des données...')
 train_ds = NewsDataset(args.train_csv, tokenizer, args.max_len)
 val_ds   = NewsDataset(args.val_csv,   tokenizer, args.max_len)
 
-labels_np      = train_ds.df['label'].values.astype(int)
+labels_np = train_ds.df['label'].values.astype(int)
+sources   = train_ds.df['source'].values
+
 class_counts   = np.bincount(labels_np)
 class_weights  = 1.0 / class_counts.astype(float)
 sample_weights = class_weights[labels_np]
+
+# Boost africain : les exemples africains ont un poids multiplié par africa_boost
+# → ils apparaissent plus souvent dans les mini-batchs → meilleure couverture du contexte africain
+africa_mask = np.array([
+    any(src.startswith(s) or src == s for s in AFRICA_SOURCES)
+    for src in sources
+])
+if africa_mask.sum() > 0:
+    n_africa = int(africa_mask.sum())
+    sample_weights[africa_mask] *= args.africa_boost
+    print(f'Africa boost ×{args.africa_boost} appliqué à {n_africa} exemples africains '
+          f'({n_africa/len(labels_np)*100:.1f}% du train brut)')
+
 sampler = WeightedRandomSampler(
     weights=torch.from_numpy(sample_weights).float(),
     num_samples=len(labels_np),
@@ -138,13 +163,34 @@ optimizer = AdamW(layer_lrs, weight_decay=0.01)
 os.makedirs(args.output_dir, exist_ok=True)
 best_f1, history = 0.0, []
 
+# ── Reprise après interruption (coupure disque, OOM, etc.) ────
+# L'entraînement CPU dure plusieurs heures par epoch : un checkpoint est
+# sauvegardé tous les `save_every` batchs pour ne pas repartir de zéro
+# après une coupure (ex : disque externe déconnecté en cours de run).
+CKPT_PATH = os.path.join(args.output_dir, '_resume_checkpoint.pt')
+start_epoch, start_step = 0, 0
+if os.path.exists(CKPT_PATH):
+    print(f'🔄 Reprise depuis un checkpoint existant : {CKPT_PATH}')
+    ckpt = torch.load(CKPT_PATH, map_location=DEVICE)
+    model.load_state_dict(ckpt['model_state'])
+    optimizer.load_state_dict(ckpt['optimizer_state'])
+    start_epoch = ckpt['epoch']
+    start_step  = ckpt['step']
+    best_f1     = ckpt['best_f1']
+    history     = ckpt['history']
+    print(f'   → Reprise à l\'epoch {start_epoch+1}, batch {start_step} (best F1 = {best_f1:.4f})')
 
-for epoch in range(args.epochs):
+
+for epoch in range(start_epoch, args.epochs):
     scheduler = LinearLR(optimizer, start_factor=0.1, end_factor=1.0,
                          total_iters=max(1, len(train_dl)//5))
     model.train()
     total_loss, preds_all, labels_all = 0.0, [], []
-    for batch in tqdm(train_dl, desc=f'Epoch {epoch+1}/{args.epochs}'):
+    resume_step = start_step if epoch == start_epoch else 0
+    for step, batch in enumerate(tqdm(train_dl, desc=f'Epoch {epoch+1}/{args.epochs}')):
+        if step < resume_step:
+            scheduler.step()
+            continue
         input_ids = batch['input_ids'].to(DEVICE)
         attn_mask = batch['attention_mask'].to(DEVICE)
         # ✅ FIX : .long() OBLIGATOIRE — CrossEntropyLoss attend int64
@@ -159,6 +205,16 @@ for epoch in range(args.epochs):
         total_loss += loss.item()
         preds_all.extend(out.logits.argmax(-1).cpu().numpy())
         labels_all.extend(lbls.cpu().numpy())
+
+        if (step + 1) % args.save_every == 0:
+            torch.save({
+                'model_state':     model.state_dict(),
+                'optimizer_state': optimizer.state_dict(),
+                'epoch':           epoch,
+                'step':            step + 1,
+                'best_f1':         best_f1,
+                'history':         history,
+            }, CKPT_PATH)
     train_f1 = f1_score(labels_all, preds_all, average='macro')
     print(f'Epoch {epoch+1} | Loss: {total_loss/len(train_dl):.4f} | Train F1: {train_f1:.4f}')
 
@@ -197,6 +253,17 @@ for epoch in range(args.epochs):
         model.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
         print(f'         ✅ Meilleur modèle sauvegardé ! Val F1 = {best_f1:.4f}')
+
+    # Checkpoint de reprise à la fin de l'epoch (reprise à l'epoch suivante)
+    torch.save({
+        'model_state':     model.state_dict(),
+        'optimizer_state': optimizer.state_dict(),
+        'epoch':           epoch + 1,
+        'step':            0,
+        'best_f1':         best_f1,
+        'history':         history,
+    }, CKPT_PATH)
+
     if val_f1 >= 0.93 and balanced_ok:
         print(f'🎯 F1 >= 0.93 sur les deux classes — arrêt anticipé à l\'epoch {epoch+1}')
         break
@@ -204,5 +271,7 @@ for epoch in range(args.epochs):
 
 print(f'Entraînement terminé. Meilleur Val F1 : {best_f1:.4f}')
 json.dump(history, open(f'{args.output_dir}/training_history.json','w'), indent=2)
+if os.path.exists(CKPT_PATH):
+    os.remove(CKPT_PATH)
 print('Prochaine étape : python scripts/export_onnx.py')
 
