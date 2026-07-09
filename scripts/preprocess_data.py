@@ -136,6 +136,30 @@ else:
     print('  FakeNewsNet : aucun CSV trouvé dans', fnn_dir)
 
 
+# ── 5. AFRICA NEWS — Dataset contextuel africain multilingue ─────────────
+# Couvre : français, anglais, swahili, haoussa + sources africaines (AFP, RFI,
+# BBC Africa, Al Jazeera, Jeune Afrique, Reuters Afrique…)
+# Fake news africaines typiques : santé, complotisme, politique, géopolitique
+africa_path = f'{BASE}/africa_news/africa_news.csv'
+_africa_loaded = False
+if os.path.exists(africa_path):
+    print('Chargement Africa News...')
+    africa_df = pd.read_csv(africa_path, on_bad_lines='skip')
+    if 'language' not in africa_df.columns:
+        africa_df['language'] = 'fr'
+    africa_df['is_africa'] = 1
+    africa_df = africa_df[['title', 'body', 'label', 'source', 'is_africa']].dropna(subset=['title'])
+    africa_df['label'] = africa_df['label'].astype(int)
+    # Marqué is_africa=1 ici, pour permettre un sur-échantillonnage fiable
+    # APRÈS la déduplication globale (voir section ÉQUILIBRAGE plus bas).
+    dfs.append(africa_df)
+    _africa_loaded = True
+    print(f'  Africa News : {len(africa_df)} exemples bruts '
+          f'({(africa_df["label"]==1).sum()} fake / {(africa_df["label"]==0).sum()} réel)')
+else:
+    print(f'  Africa News : SKIP (fichier introuvable : {africa_path})')
+
+
 # ── FUSION & NETTOYAGE ───────────────────────────────────
 if not dfs:
     print('ERREUR : Aucun dataset chargé ! Vérifier les chemins.')
@@ -153,7 +177,6 @@ n_before = len(corpus)
 corpus = corpus.drop_duplicates(subset=['title'])
 print(f'Doublons supprimés : {n_before - len(corpus)}')
 print(corpus[['label','source']].value_counts().to_string())
-
 
 # ── ÉQUILIBRAGE DES CLASSES (50 % fake / 50 % réel) ─────────
 # Évite que le modèle apprenne à détecter le fake mieux que le vrai.

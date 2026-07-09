@@ -60,13 +60,22 @@ def _get_model():
 
 
 def _classify(texts: list[str]) -> list[dict]:
-    """Classe une liste de textes via ONNX. Retourne [{is_fake, confidence, p_fake}]."""
+    """Classe une liste de textes via ONNX. Retourne [{is_fake, confidence, p_fake}].
+
+    IMPORTANT : le format du texte DOIT reproduire exactement celui utilisé à
+    l'entraînement (scripts/train_model.py) et par le classifieur Spark
+    (spark-app/src/nlp_classifier.py) : "{title[:200]} [SEP] {body[:100]}".
+    Un format différent (ex: simple concaténation sans [SEP]) déplace les
+    entrées hors distribution et fait grimper artificiellement le taux de
+    fake détecté (vérifié empiriquement : p_fake passe de 6,6% à 60% sur le
+    même article réel selon le format utilisé).
+    """
     import numpy as np
     session, tokenizer = _get_model()
     results = []
     for text in texts:
         enc = tokenizer(
-            text[:512],
+            text,
             return_tensors="np",
             truncation=True,
             padding="max_length",
@@ -85,7 +94,7 @@ def _classify(texts: list[str]) -> list[dict]:
         probs  = _softmax(logits)
         p_fake = float(probs[1])
         results.append({
-            "is_fake":    1 if p_fake >= 0.65 else 0,
+            "is_fake":    1 if p_fake >= 0.75 else 0,
             "confidence": round(float(max(probs)), 4),
             "p_fake":     round(p_fake, 4),
         })
@@ -267,8 +276,9 @@ def web_search(
     # ── 3. Classification ONNX directe ───────────────────────────────────────
     classified_articles = []
     try:
+        # Format identique à l'entraînement (voir _classify) : title[:200] [SEP] body[:100]
         texts = [
-            f"{a['title']} {a['body']}".strip() for a in pipeline_articles
+            f"{a['title'][:200]} [SEP] {a['body'][:100]}".strip() for a in pipeline_articles
         ]
         preds = _classify(texts)
         for art, pred in zip(pipeline_articles, preds):

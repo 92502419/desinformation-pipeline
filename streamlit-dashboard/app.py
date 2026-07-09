@@ -929,7 +929,7 @@ elif "Recherche" in page:
                                    color_discrete_map={"🔴 FAKE": CLR_FAKE, "🟢 RÉEL": CLR_REAL},
                                    title=f"Score de désinformation — « {web_query} »",
                                    labels={"p_fake": "Probabilité fake", "titre_court": "Article"}, height=280)
-                fig_web_d.add_hline(y=0.65, line_dash="dash", line_color="orange", annotation_text="Seuil 0.65")
+                fig_web_d.add_hline(y=0.75, line_dash="dash", line_color="orange", annotation_text="Seuil 0.75")
                 fig_web_d.update_layout(margin=dict(t=40, b=5), xaxis_tickangle=-30, showlegend=True)
                 st.plotly_chart(fig_web_d, use_container_width=True)
                 st.markdown("---")
@@ -1337,11 +1337,25 @@ elif "Drift" in page:
     # ── Panneau de simulation de dérive ──────────────────────────────────────
     st.markdown("---")
     st.subheader("🔥 Simuler un Concept Drift")
-    st.markdown(
-        "Injecte des articles simulés dans le flux Kafka pour déclencher "
-        "la détection de dérive et observer la réaction du tri-détecteur en temps réel."
-    )
-    sim_col1, sim_col2, sim_col3 = st.columns([2, 1, 1])
+
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#2C3E50,#8E44AD);border-radius:10px;
+                padding:14px 18px;color:white;margin-bottom:16px;">
+      <b>Comment fonctionne la simulation ?</b><br>
+      <small>
+      La simulation injecte des <b>articles faux</b> dans le flux Kafka pour provoquer
+      artificiellement une dérive de concept. Le détecteur tri-hybride (ADWIN + KSWIN + PageHinkley)
+      réagit en quelques minutes. <br>
+      ✅ Le drift reste <b>observable pendant une fenêtre de visualisation</b> (5-10 min), puis
+      des articles réels sont envoyés <b>automatiquement</b> pour rééquilibrer le modèle et
+      revenir à l'état normal — le drift n'est jamais un état permanent.<br>
+      ⚠️ La simulation ne modifie <b>pas</b> les analyses de recherche web — elle sert uniquement
+      à démontrer la détection de dérive.
+      </small>
+    </div>
+    """, unsafe_allow_html=True)
+
+    sim_col1, sim_col2 = st.columns([3, 1])
     with sim_col1:
         scenario_labels = {
             "B — Graduel (recommandé)":     "B",
@@ -1355,19 +1369,24 @@ elif "Drift" in page:
             index=0,
             help="B=50%→90% progressif | A=bloc abrupt | C=pics répétés | D=montée lente"
         )
+        with_recovery_toggle = st.checkbox(
+            "✅ Récupération automatique après le drift (recommandé)",
+            value=True,
+            help="Envoie des articles réels fiables après la fenêtre de visualisation pour rééquilibrer le modèle"
+        )
+        visualization_minutes = st.slider(
+            "⏱️ Fenêtre de visualisation du drift (minutes)",
+            min_value=1, max_value=10, value=5, step=1,
+            disabled=not with_recovery_toggle,
+            help="Durée pendant laquelle le drift reste actif et observable dans Grafana/Streamlit "
+                 "avant le retour automatique à la normale."
+        )
     with sim_col2:
         st.markdown("<br>", unsafe_allow_html=True)
         inject_btn = st.button("🚀 Lancer la simulation", use_container_width=True, type="primary")
-    with sim_col3:
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(
-            f'<a href="{API_BASE}/docs#/drift/inject_drift_api_v1_drift_inject_post" '
-            f'target="_blank" style="text-decoration:none;">'
-            f'<button style="width:100%;padding:8px;border-radius:6px;'
-            f'background:#3498DB;color:white;border:none;cursor:pointer;">📖 API Docs</button>'
-            f'</a>',
-            unsafe_allow_html=True
-        )
+        recover_btn = st.button("🔄 Récupérer maintenant", use_container_width=True,
+                                help="Envoie des articles réels pour rééquilibrer le modèle")
 
     if inject_btn and API_BASE:
         scenario_code = scenario_labels[scenario_choice]
@@ -1375,17 +1394,21 @@ elif "Drift" in page:
             with st.spinner(f"Injection du scénario {scenario_code} en cours..."):
                 resp = requests.post(
                     f"{API_BASE}/api/v1/drift/inject",
-                    params={"scenario": scenario_code},
+                    params={"scenario": scenario_code, "with_recovery": with_recovery_toggle,
+                            "visualization_window": visualization_minutes * 60},
                     timeout=10
                 )
             if resp.ok:
                 data = resp.json()
                 st.success(
-                    f"✅ **{data.get('message', 'Simulation lancée !')}**  \n"
-                    f"Scénario **{data.get('scenario')}** injecté en arrière-plan. "
-                    f"Résultats visibles dans Grafana et ci-dessus dans ~2 minutes."
+                    f"✅ **Scénario {data.get('scenario')} lancé en arrière-plan.**\n\n"
+                    f"{data.get('message', '')}\n\n"
+                    f"Résultats visibles dans Grafana et dans l'historique ci-dessus dans ~2 minutes."
                 )
-                st.info("💡 Active le **rafraîchissement auto** (barre latérale) pour suivre l'évolution en temps réel.")
+                if with_recovery_toggle:
+                    st.info(f"🔄 Drift observable pendant ~{visualization_minutes} min, puis récupération "
+                            "automatique — le modèle reviendra à la normale sans intervention manuelle.")
+                st.info("💡 Activez le **rafraîchissement auto** (barre latérale) pour suivre l'évolution en temps réel.")
             else:
                 st.error(f"Erreur API ({resp.status_code}) : {resp.text[:200]}")
         except Exception as e:
@@ -1393,13 +1416,31 @@ elif "Drift" in page:
     elif inject_btn and not API_BASE:
         st.warning("API non disponible — pipeline Docker non démarré.")
 
+    if recover_btn and API_BASE:
+        try:
+            with st.spinner("Lancement de la récupération..."):
+                resp = requests.post(f"{API_BASE}/api/v1/drift/recover", timeout=10)
+            if resp.ok:
+                st.success(
+                    "✅ **Récupération lancée !** 100 articles réels fiables ont été envoyés "
+                    "dans le flux Kafka. Le modèle reviendra progressivement à la normale "
+                    "dans les 2-3 prochaines minutes."
+                )
+            else:
+                st.error(f"Erreur lors de la récupération ({resp.status_code})")
+        except Exception as e:
+            st.error(f"Connexion à l'API impossible : {e}")
+    elif recover_btn and not API_BASE:
+        st.warning("API non disponible — pipeline Docker non démarré.")
+
     st.markdown("""
     <div style="background:#F8F9FA;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.85rem;">
     <b>Description des scénarios :</b><br>
-    🔶 <b>B — Graduel</b> : taux fake monte de 50% → 90% sur 120 articles (~5 min) — scénario recommandé pour la soutenance<br>
+    🔶 <b>B — Graduel</b> : taux fake monte de 50% → 90% sur 120 articles (~5 min) + récupération → scénario recommandé pour la soutenance<br>
     🔴 <b>A — Abrupt</b> : 30 articles normaux puis bloc de 80 articles à 90% fake — ADWIN détecte en &lt; 10 messages<br>
-    🔁 <b>C — Cyclique</b> : 3 pics fake/réel alternés — simule une campagne récurrente<br>
-    📉 <b>D — Incrémental</b> : montée très lente 30% → 90% sur 200 articles — KSWIN excelle sur ce scénario
+    🔁 <b>C — Cyclique</b> : 3 pics fake/réel alternés — simule une campagne récurrente de désinformation<br>
+    📉 <b>D — Incrémental</b> : montée très lente 30% → 90% sur 200 articles — KSWIN excelle sur ce scénario<br><br>
+    <b>Cycle complet :</b> Simulation drift → Détection tri-hybride → Alerte → Récupération → Retour à la normale
     </div>
     """, unsafe_allow_html=True)
 

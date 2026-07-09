@@ -81,6 +81,62 @@ REAL_BODIES = [
 SOURCES_FAKE = ["InfoBrûlante", "VéritéCachée", "AlerteComplot", "RévélationsExclusives", "InfoResistance"]
 SOURCES_REAL = ["AFP", "Reuters", "BBC News", "Le Monde", "RFI", "France24", "AP News"]
 
+RECOVERY_TITLES = [
+    "AFP : L'Union Africaine tient son sommet sur le développement durable",
+    "Reuters: IMF approves economic support package for African nations",
+    "RFI : L'OMS lance une campagne de vaccination contre la méningite au Sahel",
+    "BBC Africa: Kenya records strong economic growth driven by tech sector",
+    "AFP : Le Sénégal inaugure son premier champ d'énergie solaire en mer",
+    "Reuters: African Development Bank approves funding for infrastructure projects",
+    "RFI : La CEDEAO renforce la coopération économique régionale",
+    "Al Jazeera: Ethiopia and Somalia sign landmark peace agreement",
+    "AFP : Le Bénin enregistre une hausse de 6% de son PIB selon la Banque mondiale",
+    "Reuters: Nigeria launches new digital payment system to boost financial inclusion",
+]
+RECOVERY_BODIES = [
+    "Les dirigeants ont discuté des stratégies de développement économique inclusif.",
+    "International organizations confirm the implementation of new support measures.",
+    "Les gouvernements s'engagent à respecter les accords internationaux.",
+    "Regional cooperation continues to improve with new trade agreements.",
+    "Les scientifiques présentent leurs conclusions après des recherches approfondies.",
+]
+RECOVERY_SOURCES = ["AFP", "Reuters", "BBC Africa", "RFI", "Al Jazeera"]
+
+
+def make_recovery_article(idx: int) -> dict:
+    """Crée un article réel fiable pour la phase de récupération post-drift."""
+    title = RECOVERY_TITLES[idx % len(RECOVERY_TITLES)]
+    body  = RECOVERY_BODIES[idx % len(RECOVERY_BODIES)]
+    source = RECOVERY_SOURCES[idx % len(RECOVERY_SOURCES)]
+    url = f"https://recovery.pipeline/{source.lower().replace(' ','-')}/article-{idx}"
+    art_id = hashlib.md5((url + title + str(idx)).encode()).hexdigest()
+    return {
+        "id":              art_id,
+        "title":           title,
+        "body":            body,
+        "url":             url,
+        "source":          source,
+        "source_category": "reliable",
+        "language":        "fr",
+        "timestamp":       datetime.now(timezone.utc).isoformat(),
+        "gdelt_tone":      3.0,
+    }
+
+
+def run_recovery(producer: Producer, n_articles: int = 80):
+    """Phase de récupération : envoie n articles réels pour rééquilibrer le modèle."""
+    log.info(f"=== Phase de RÉCUPÉRATION — envoi de {n_articles} articles réels ===")
+    articles = [make_recovery_article(i) for i in range(n_articles)]
+    for art in articles:
+        producer.produce(
+            topic=TOPIC,
+            key=art["id"],
+            value=json.dumps(art, ensure_ascii=False).encode("utf-8"),
+        )
+    producer.flush()
+    log.info(f"✅ Récupération terminée — {n_articles} articles réels envoyés dans le flux.")
+
+
 def make_article(is_fake: bool, idx: int, gdelt_tone: float = 0.0) -> dict:
     if is_fake:
         title = random.choice(FAKE_TITLES)
@@ -192,8 +248,27 @@ def scenario_d_incremental(producer: Producer):
 
 # ── Fonction principale d'injection (réutilisée par l'API FastAPI) ───────────
 
-def run_scenario(scenario: str, broker: str = None, topic: str = None) -> dict:
-    """Exécute un scénario de dérive et retourne un résumé. Utilisé par l'API REST."""
+def run_scenario(scenario: str, broker: str = None, topic: str = None,
+                  with_recovery: bool = True, recovery_articles: int = 80,
+                  visualization_window: int = 300) -> dict:
+    """Exécute un scénario de dérive puis une phase de récupération. Utilisé par l'API REST.
+
+    Le drift doit rester OBSERVABLE un moment avant que tout ne revienne à la
+    normale : ce n'est pas un aller-retour instantané. Séquence complète :
+      1. Injection du scénario (fake news simulées) → visible dans Grafana/Streamlit.
+      2. Fenêtre de visualisation de `visualization_window` secondes (5-10 min par
+         défaut) pendant laquelle le drift reste actif et observable.
+      3. Récupération automatique : envoi d'articles réels → retour à l'état normal.
+
+    Args:
+        with_recovery: Si True (défaut), déclenche la récupération après la fenêtre
+                       de visualisation pour revenir à l'état normal.
+        recovery_articles: Nombre d'articles réels envoyés lors de la récupération.
+        visualization_window: Secondes d'attente entre la fin de l'injection et le
+                       début de la récupération (défaut 300s = 5 min). Laisse le
+                       temps d'observer le drift dans Grafana/Streamlit avant le
+                       retour automatique à la normale.
+    """
     kb = broker or KAFKA_BROKER
     tp = topic  or TOPIC
     producer = Producer({
@@ -257,7 +332,44 @@ def run_scenario(scenario: str, broker: str = None, topic: str = None) -> dict:
         producer.flush()
 
     log.info(f"✅ Scénario {sc} terminé.")
-    return {"scenario": sc, "status": "injected", "broker": kb, "topic": tp}
+
+    # ── Phase de récupération automatique ────────────────────────────────────
+    # Le drift reste visible pendant `visualization_window` secondes (5-10 min)
+    # avant que des articles réels ne soient envoyés pour ramener le modèle et
+    # les statistiques à l'état normal. Sans cette fenêtre, le drift ne serait
+    # jamais observable dans Grafana/Streamlit avant sa propre correction.
+    if with_recovery:
+        log.info(f"⏳ Fenêtre de visualisation du drift : {visualization_window}s "
+                 f"({visualization_window/60:.1f} min) avant récupération automatique...")
+        time.sleep(visualization_window)
+        recovery_producer = Producer({
+            "bootstrap.servers": kb,
+            "client.id": "drift-recovery",
+            "message.max.bytes": 2000000,
+        })
+        log.info(f"🔄 Phase de récupération — envoi de {recovery_articles} articles réels fiables...")
+        for i in range(recovery_articles):
+            art = make_recovery_article(i)
+            recovery_producer.produce(
+                topic=tp,
+                key=art["id"],
+                value=json.dumps(art, ensure_ascii=False).encode("utf-8"),
+            )
+            if (i + 1) % 20 == 0:
+                recovery_producer.flush()
+                log.info(f"  Récupération: {i+1}/{recovery_articles} articles réels envoyés")
+        recovery_producer.flush()
+        log.info(f"✅ Récupération terminée — le modèle revient progressivement à la normale.")
+
+    return {
+        "scenario":             sc,
+        "status":               "injected",
+        "broker":               kb,
+        "topic":                tp,
+        "recovery_done":        with_recovery,
+        "recovery_articles":    recovery_articles if with_recovery else 0,
+        "visualization_window": visualization_window if with_recovery else 0,
+    }
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

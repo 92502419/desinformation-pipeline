@@ -153,11 +153,17 @@ def process_batch(batch_df, batch_id):
         }
         batch_docs.append(doc)
 
-        # 4. Accumuler pour l'online learning
+        # 4. Accumuler pour l'online learning (fake ET réel)
+        # On s'entraîne sur TOUS les articles (fake et réel) mais uniquement
+        # lorsque la confiance est élevée (> 0.85) pour éviter de renforcer
+        # les erreurs de classification sur les articles ambigus.
+        # Un article classé fake avec 90% de confiance est un bon exemple d'apprentissage.
+        # Un article incertain (60-80%) risque d'être mal étiqueté → skip.
         text = f"{row.title} [SEP] {(row.body or '')[:100]}"
-        batch_texts.append(text)
-        batch_labels.append(pred['label'])
-        nlp_model.reservoir_update(text, pred['label'])
+        if pred['confidence'] > 0.85:
+            batch_texts.append(text)
+            batch_labels.append(pred['label'])
+            nlp_model.reservoir_update(text, pred['label'])
 
     t_loop = time.time()
     log.info(f'Batch {batch_id}: boucle inference={t_loop-t_collect:.1f}s ({(t_loop-t_collect)/len(rows)*1000:.0f}ms/article)')
