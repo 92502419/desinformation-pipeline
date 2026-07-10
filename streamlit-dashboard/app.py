@@ -210,23 +210,23 @@ st.markdown("""
 
 
 # ── Connexions (cached) ───────────────────────────────────────────────────────
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False, ttl=60)
 def get_mongo():
     if not HAS_MONGO or not MONGO_URI:
         return None
     try:
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         client.admin.command('ping')
         return client[MONGO_DB]
     except Exception:
         return None
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False, ttl=60)
 def get_es():
     if not HAS_ES or not ES_HOST:
         return None
     try:
-        es = Elasticsearch(ES_HOST, request_timeout=4)
+        es = Elasticsearch(ES_HOST, request_timeout=10)
         if es.ping():
             return es
         return None
@@ -245,7 +245,7 @@ def fetch_stats():
     if not API_BASE:
         return _DEMO_STATS if _IS_CLOUD else {}
     try:
-        r = requests.get(f"{API_BASE}/api/v1/stats", timeout=3)
+        r = requests.get(f"{API_BASE}/api/v1/stats", timeout=8)
         return r.json() if r.ok else {}
     except Exception:
         return {}
@@ -256,7 +256,7 @@ def fetch_health():
         return {"status": "demo", "mongo": "up", "elasticsearch": "up",
                 "timestamp": datetime.now(timezone.utc).isoformat()} if _IS_CLOUD else {}
     try:
-        r = requests.get(f"{API_BASE}/health", timeout=3)
+        r = requests.get(f"{API_BASE}/health", timeout=8)
         return r.json() if r.ok else {}
     except Exception:
         return {}
