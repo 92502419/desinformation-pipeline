@@ -18,7 +18,13 @@ KSWIN_WINDOW   = int(os.getenv('KSWIN_WINDOW_SIZE', 100))
 KSWIN_ALPHA    = float(os.getenv('KSWIN_ALPHA', 0.005))
 PH_DELTA       = float(os.getenv('PH_DELTA', 0.005))        # sensibilité PageHinkley
 PH_THRESHOLD   = float(os.getenv('PH_THRESHOLD', 50.0))     # seuil PageHinkley
-DRIFT_THRESH   = float(os.getenv('DRIFT_COMPOSITE_THRESHOLD', 0.5))
+# Empiriquement, sur le bruit réel du modèle, ADWIN (poids 0.45) est le
+# détecteur le plus fiable : il se déclenche de façon répétée et cohérente,
+# mais KSWIN/PageHinkley se synchronisent rarement avec lui dans la même
+# fenêtre de rémanence. Seuil abaissé de 0.5 à 0.4 pour qu'ADWIN seul
+# suffise à confirmer la dérive, sans qu'un signal isolé plus faible
+# (KSWIN=0.35 ou PageHinkley=0.20) ne déclenche une fausse alerte à lui seul.
+DRIFT_THRESH   = float(os.getenv('DRIFT_COMPOSITE_THRESHOLD', 0.4))
 CONFIRM_THRESH = float(os.getenv('DRIFT_CONFIRMED_THRESHOLD', 0.8))
 LR_BASE        = float(os.getenv('ONLINE_LR_BASE', 1e-5))
 LR_DRIFT       = float(os.getenv('ONLINE_LR_DRIFT', 5e-5))
@@ -53,6 +59,17 @@ class DynamicDriftMonitor:
         self.messages_since_drift  = 0
         self.drift_events          = []
         self.confidence_history    = []
+        # Fenêtre de rémanence (en messages) : chaque détecteur ne pulse
+        # 'drift_detected=True' que le message exact où il bascule (ADWIN,
+        # KSWIN et PageHinkley se déclenchent presque toujours à des indices
+        # différents). Sans rémanence, le score composite ne peut quasiment
+        # jamais additionner deux signaux au même instant et ne franchit
+        # donc jamais DRIFT_THRESH. On garde chaque signal actif pendant
+        # SIGNAL_HOLD messages après son déclenchement pour permettre aux
+        # 3 détecteurs de se combiner s'ils repèrent la même dérive à
+        # quelques messages d'intervalle.
+        self.SIGNAL_HOLD = int(os.getenv('DRIFT_SIGNAL_HOLD_MESSAGES', 100))
+        self._hold        = {'ADWIN': 0, 'KSWIN': 0, 'PageHinkley': 0}
         print(
             f'[DRIFT] Monitor initialisé | '
             f'ADWIN δ={ADWIN_DELTA} | KSWIN α={KSWIN_ALPHA} | '
@@ -76,11 +93,21 @@ class DynamicDriftMonitor:
         self.kswin.update(confidence)
         self.page_hinkley.update(confidence)
 
+        # ── Rémanence : un détecteur qui vient de pulser reste "actif"
+        #    pendant SIGNAL_HOLD messages, pour laisser une chance aux
+        #    deux autres détecteurs de le rejoindre dans le score composite.
+        for name, detector in (('ADWIN', self.adwin), ('KSWIN', self.kswin),
+                                ('PageHinkley', self.page_hinkley)):
+            if detector.drift_detected:
+                self._hold[name] = self.SIGNAL_HOLD
+            elif self._hold[name] > 0:
+                self._hold[name] -= 1
+
         # ── Score composite pondéré ───────────────────────────────────
         signals = {
-            'ADWIN':        float(self.adwin.drift_detected),
-            'KSWIN':        float(self.kswin.drift_detected),
-            'PageHinkley':  float(self.page_hinkley.drift_detected),
+            'ADWIN':        float(self._hold['ADWIN'] > 0),
+            'KSWIN':        float(self._hold['KSWIN'] > 0),
+            'PageHinkley':  float(self._hold['PageHinkley'] > 0),
         }
         self.composite_score = sum(self.WEIGHTS[k] * v for k, v in signals.items())
 
@@ -121,9 +148,9 @@ class DynamicDriftMonitor:
             'timestamp':              datetime.now(timezone.utc).isoformat(),
             'composite_score':        round(self.composite_score, 4),
             'signals': {
-                'ADWIN':       bool(self.adwin.drift_detected),
-                'KSWIN':       bool(self.kswin.drift_detected),
-                'PageHinkley': bool(self.page_hinkley.drift_detected),
+                'ADWIN':       self._hold['ADWIN'] > 0,
+                'KSWIN':       self._hold['KSWIN'] > 0,
+                'PageHinkley': self._hold['PageHinkley'] > 0,
             },
             'drift_confirmed':        self.drift_confirmed,
             'recommended_lr':         self.get_recommended_lr(),

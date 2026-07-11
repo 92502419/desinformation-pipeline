@@ -193,6 +193,11 @@ def process_batch(batch_df, batch_id):
             db.drift_events.insert_one({**alert, '_batch_id': batch_id})
         except Exception as e:
             log.warning(f'Erreur stockage drift event : {e}')
+        # Indexer l'événement dans Elasticsearch (lu par le panneau Grafana "Événements de Concept Drift")
+        try:
+            es_client.index(index='drift-events', document={**alert, '_batch_id': batch_id})
+        except Exception as e:
+            log.warning(f'Erreur indexation Elasticsearch drift event : {e}')
 
     # 7. Stockage MongoDB — upsert sur 'id' (évite les doublons)
     if batch_docs:

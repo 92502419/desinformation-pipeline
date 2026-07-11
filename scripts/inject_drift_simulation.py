@@ -177,23 +177,35 @@ def send_batch(producer: Producer, articles: list):
 # ── Scénarios ─────────────────────────────────────────────────────────────────
 
 def scenario_a_abrupt(producer: Producer):
-    """Dérive abrupte : passage brutal de ~50% fake à ~90% fake en un seul bloc."""
+    """Dérive abrupte : passage brutal de ~50% fake à ~90% fake en un seul bloc.
+
+    Volume calibré empiriquement à ~450 messages au total (voir scenario_b_gradual)
+    pour que les détecteurs ADWIN/KSWIN convergent de façon fiable.
+    """
     log.info("=== Scénario A — Dérive Abrupte ===")
-    log.info("Phase 1/2 : baseline 30 articles (50% fake)")
-    send_batch(producer, [make_article(i % 2 == 0, i) for i in range(30)])
+    log.info("Phase 1/2 : baseline 100 articles (50% fake)")
+    send_batch(producer, [make_article(i % 2 == 0, i) for i in range(100)])
     time.sleep(6)
 
-    log.info("Phase 2/2 : DÉRIVE — 80 articles (90% fake) — visible dans Grafana ~2 min")
-    articles = [make_article(random.random() < 0.90, i + 30, gdelt_tone=-5.0)
-                for i in range(80)]
+    log.info("Phase 2/2 : DÉRIVE — 350 articles (90% fake) — visible dans Grafana ~2 min")
+    articles = [make_article(random.random() < 0.90, i + 100, gdelt_tone=-5.0)
+                for i in range(350)]
     send_batch(producer, articles)
     log.info("Scénario A terminé. Ouvrez Grafana → Score Composite Drift")
 
 
 def scenario_b_gradual(producer: Producer):
-    """Dérive graduelle : taux fake augmente progressivement de 50% à 90% sur 120 messages."""
+    """Dérive graduelle : taux fake augmente progressivement de 50% à 90% sur 450 messages.
+
+    Volume calibré empiriquement : avec le niveau de bruit réel du modèle
+    (distributions p_fake réel/fake très chevauchantes), les détecteurs
+    ADWIN/KSWIN ont besoin d'environ 450 messages classifiés pour que leurs
+    signaux se combinent et dépassent le seuil composite — un volume plus
+    faible (120 messages, valeur précédente) ne convergeait quasiment jamais
+    dans la fenêtre de visualisation.
+    """
     log.info("=== Scénario B — Dérive Graduelle (scénario soutenance) ===")
-    total = 120
+    total = 450
     for i in range(total):
         fake_prob = 0.50 + (0.40 * i / total)   # 50% → 90% progressivement
         article = make_article(random.random() < fake_prob, i, gdelt_tone=-i * 0.05)
@@ -202,7 +214,7 @@ def scenario_b_gradual(producer: Producer):
             key=article["id"],
             value=json.dumps(article, ensure_ascii=False).encode("utf-8"),
         )
-        if (i + 1) % 10 == 0:
+        if (i + 1) % 30 == 0:
             producer.flush()
             pct = int(fake_prob * 100)
             log.info(f"  {i+1}/{total} articles envoyés — taux fake simulé : {pct}%")
@@ -278,58 +290,14 @@ def run_scenario(scenario: str, broker: str = None, topic: str = None,
         "linger.ms": 100,
     })
 
-    def _send(articles):
-        for art in articles:
-            producer.produce(
-                topic=tp,
-                key=art["id"],
-                value=json.dumps(art, ensure_ascii=False).encode("utf-8"),
-            )
-        producer.flush()
-
+    # Délègue aux fonctions scenario_*() ci-dessus — évite toute duplication
+    # de logique (volumes, probabilités) entre l'exécution CLI et l'API REST.
     sc = scenario.upper()
-    if sc == "A":
-        log.info("=== Scénario A — Dérive Abrupte ===")
-        log.info("Phase 1/2 : baseline 30 articles (50% fake)")
-        _send([make_article(i % 2 == 0, i) for i in range(30)])
-        time.sleep(6)
-        log.info("Phase 2/2 : DÉRIVE — 80 articles (90% fake)")
-        _send([make_article(random.random() < 0.90, i + 30, gdelt_tone=-5.0) for i in range(80)])
-    elif sc == "C":
-        log.info("=== Scénario C — Dérive Cyclique ===")
-        for cycle in range(3):
-            log.info(f"Cycle {cycle+1}/3 — pic FAKE")
-            _send([make_article(random.random() < 0.85, cycle*60+i) for i in range(30)])
-            time.sleep(4)
-            log.info(f"Cycle {cycle+1}/3 — retour RÉEL")
-            _send([make_article(random.random() < 0.20, cycle*60+30+i) for i in range(30)])
-            time.sleep(4)
-    elif sc == "D":
-        log.info("=== Scénario D — Dérive Incrémentale ===")
-        total = 200
-        for i in range(total):
-            fake_prob = 0.30 + (0.60 * (i / total) ** 2)
-            art = make_article(random.random() < fake_prob, i)
-            producer.produce(tp, key=art["id"],
-                             value=json.dumps(art, ensure_ascii=False).encode("utf-8"))
-            if (i + 1) % 20 == 0:
-                producer.flush()
-                log.info(f"  {i+1}/{total} — {fake_prob*100:.0f}%")
-                time.sleep(1)
-        producer.flush()
-    else:  # B (défaut)
-        log.info("=== Scénario B — Dérive Graduelle ===")
-        total = 120
-        for i in range(total):
-            fake_prob = 0.50 + (0.40 * i / total)
-            art = make_article(random.random() < fake_prob, i, gdelt_tone=-i*0.05)
-            producer.produce(tp, key=art["id"],
-                             value=json.dumps(art, ensure_ascii=False).encode("utf-8"))
-            if (i + 1) % 10 == 0:
-                producer.flush()
-                log.info(f"  {i+1}/{total} — {int(fake_prob*100)}%")
-                time.sleep(2)
-        producer.flush()
+    {
+        "A": scenario_a_abrupt,
+        "C": scenario_c_cyclic,
+        "D": scenario_d_incremental,
+    }.get(sc, scenario_b_gradual)(producer)
 
     log.info(f"✅ Scénario {sc} terminé.")
 
