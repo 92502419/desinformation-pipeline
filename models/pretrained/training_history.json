@@ -1,0 +1,102 @@
+[
+  {
+    "epoch": 1,
+    "train_f1": 0.9219,
+    "val_f1": 0.9321,
+    "val_precision": 0.9279,
+    "val_recall": 0.937,
+    "val_auc": 0.9872,
+    "train_loss": 0.181,
+    "duration_sec": 3643.5
+  },
+  {
+    "epoch": 2,
+    "train_f1": 0.9569,
+    "val_f1": 0.9371,
+    "val_precision": 0.9221,
+    "val_recall": 0.9549,
+    "val_auc": 0.9892,
+    "train_loss": 0.1359,
+    "duration_sec": 3645.2
+  },
+  {
+    "epoch": 3,
+    "train_f1": 0.9625,
+    "val_f1": 0.9392,
+    "val_precision": 0.9379,
+    "val_recall": 0.9407,
+    "val_auc": 0.9902,
+    "train_loss": 0.1352,
+    "duration_sec": 3657.4
+  },
+  {
+    "epoch": 4,
+    "train_f1": 0.9691,
+    "val_f1": 0.9337,
+    "val_precision": 0.9546,
+    "val_recall": 0.9109,
+    "val_auc": 0.9892,
+    "train_loss": 0.1369,
+    "duration_sec": 3696.0
+  },
+  {
+    "epoch": 5,
+    "train_f1": 0.9747,
+    "val_f1": 0.9383,
+    "val_precision": 0.9418,
+    "val_recall": 0.9344,
+    "val_auc": 0.9896,
+    "train_loss": 0.1512,
+    "duration_sec": 3652.7
+  },
+  {
+    "epoch": 6,
+    "train_f1": 0.9793,
+    "val_f1": 0.9373,
+    "val_precision": 0.9313,
+    "val_recall": 0.9443,
+    "val_auc": 0.9888,
+    "train_loss": 0.1396,
+    "duration_sec": 3662.8
+  },
+  {
+    "epoch": 7,
+    "train_f1": 0.9826,
+    "val_f1": 0.9374,
+    "val_precision": 0.9103,
+    "val_recall": 0.9706,
+    "val_auc": 0.9887,
+    "train_loss": 0.127,
+    "duration_sec": 3665.2
+  },
+  {
+    "epoch": 8,
+    "train_f1": 0.9851,
+    "val_f1": 0.9378,
+    "val_precision": 0.9231,
+    "val_recall": 0.9553,
+    "val_auc": 0.9892,
+    "train_loss": 0.1106,
+    "duration_sec": 3675.7
+  },
+  {
+    "epoch": 9,
+    "train_f1": 0.9862,
+    "val_f1": 0.9372,
+    "val_precision": 0.9223,
+    "val_recall": 0.9549,
+    "val_auc": 0.9895,
+    "train_loss": 0.1014,
+    "duration_sec": 3658.1
+  },
+  {
+    "epoch": 10,
+    "train_f1": 0.989,
+    "val_f1": 0.9333,
+    "val_precision": 0.9481,
+    "val_recall": 0.9168,
+    "val_auc": 0.9891,
+    "train_loss": 0.0819,
+    "duration_sec": 3669.4
+  }
+]

@@ -1,0 +1,45 @@
+# .gitignore — reconstruit le 2026-08-27 (original corrompu lors du plantage disque)
+
+# ── Environnements virtuels ──────────────────────────────────────
+venv_main/
+venv_spark/
+venv_producer/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# ── Secrets ──────────────────────────────────────────────────────
+.env
+!.env.example
+.kaggle/
+
+# ── Données volumineuses (téléchargées / générées par les scripts) ─
+data/raw/
+data/processed/
+!data/.gitkeep
+
+# ── Modèles volumineux (poids réentraînables, pas de sens à versionner sur Git) ─
+models/pretrained/*.safetensors
+models/pretrained/*.pt
+models/pretrained/*.bin
+models/checkpoints/
+models/onnx/*.onnx
+checkpoints/
+!models/pretrained/config.json
+!models/pretrained/tokenizer*.json
+!models/pretrained/vocab.txt
+!models/pretrained/special_tokens_map.json
+!models/pretrained/training_history.json
+
+# ── Logs / runtime Docker ────────────────────────────────────────
+logs/*.log
+spark-app/src/__pycache__/
+producer/src/__pycache__/
+
+# ── Fichiers temporaires OS / éditeurs ───────────────────────────
+*.tmp
+.DS_Store
+*.swp
+
+# ── Jupyter ───────────────────────────────────────────────────────
+notebooks/.ipynb_checkpoints/

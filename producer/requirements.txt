@@ -1,0 +1,11 @@
+# producer/requirements.txt — CONTENU EXACT (sans asyncio)
+# Généré avec : pip freeze > producer/requirements.txt (dans venv_producer activé)
+aiofiles==23.2.1
+confluent-kafka==2.5.0
+feedparser==6.0.11
+gdown==5.2.0
+httpx==0.27.0
+kaggle==1.6.17
+python-dotenv==1.0.1
+# asyncio → NE PAS INCLURE (stdlib Python 3.12)
+

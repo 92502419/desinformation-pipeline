@@ -1,0 +1,10 @@
+# requirements.txt — pointeur racine
+# Ce projet utilise un venv dédié par service (voir Documentation Technique, ÉTAPE 3) :
+#   - venv_main      -> requirements_main.txt   (scripts/, notebooks/, entraînement)
+#   - venv_spark     -> spark-app/requirements.txt
+#   - venv_producer  -> producer/requirements.txt
+#   - api/           -> api/requirements.txt (installé dans le conteneur Docker)
+#   - streamlit-dashboard/ -> streamlit-dashboard/requirements.txt
+#
+# Pour un déploiement cloud simplifié (Streamlit Cloud, Colab...) sans venv séparés :
+-r requirements_main.txt

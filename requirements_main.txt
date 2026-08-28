@@ -1,0 +1,44 @@
+# requirements_main.txt — Environnement principal (venv_main)
+# scripts/ (téléchargement, prétraitement, entraînement, export ONNX) + notebooks/
+#
+# NB (2026-08-27) : ce fichier a été reconstruit après un plantage disque qui avait
+# corrompu l'original figé en pip freeze. Les versions ci-dessous sont des bornes
+# minimales compatibles Python 3.12 ET 3.14 (cette machine tourne en 3.14, faute de
+# paquet python3.12-venv installable sans droits root) ; utiliser
+# `pip freeze > requirements_main.txt` pour figer les versions réellement installées
+# une fois l'environnement validé.
+
+# === DEEP LEARNING & NLP =====================================
+torch>=2.4.0
+transformers>=4.44.0
+datasets>=2.21.0
+accelerate>=0.34.0
+tokenizers>=0.19.1
+
+# === CONCEPT DRIFT ============================================
+river>=0.21.2               # ADWIN, KSWIN, PageHinkley
+
+# === DONNÉES & ML CLASSIQUE ===================================
+pandas>=2.2.2
+numpy>=1.26.4
+scikit-learn>=1.5.2
+imbalanced-learn>=0.12.3
+
+# === NLP OUTILS ================================================
+langdetect>=1.0.9
+emoji>=2.12.1
+feedparser>=6.0.11
+
+# === OPTIMISATION INFÉRENCE ====================================
+onnxruntime>=1.19.0
+optimum>=1.21.0
+optimum-onnx>=0.1.0   # depuis optimum 2.x, le backend ONNX Runtime est un paquet séparé
+
+# === UTILITAIRES ===============================================
+tqdm>=4.66.5
+python-dotenv>=1.0.1
+jupyterlab>=4.2.5
+matplotlib>=3.9.2
+seaborn>=0.13.2
+gdown>=5.2.0
+kaggle>=1.6.17

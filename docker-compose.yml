@@ -1,0 +1,292 @@
+# docker-compose.yml — Pipeline Big Data Désinformation
+# KOMOSSI Sosso — UCAO UUT Master BIG DATA IA — 2025-2026
+# Reconstruit le 2026-08-27 à partir de Documentation_Technique_..._v9.docx
+# après un plantage disque qui avait corrompu ce fichier.
+# Usage : docker compose up -d
+
+services:
+
+  # ════════════════════════════════════════════════════════
+  # ZOOKEEPER — Coordinateur Kafka
+  # ════════════════════════════════════════════════════════
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ['CMD', 'nc', '-z', 'localhost', '2181']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ════════════════════════════════════════════════════════
+  # KAFKA BROKER
+  # ════════════════════════════════════════════════════════
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - '9092:9092'
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_MESSAGE_MAX_BYTES: 2000000
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ['CMD', 'kafka-topics', '--list', '--bootstrap-server', 'localhost:29092']
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ════════════════════════════════════════════════════════
+  # KAFKA UI (Kafdrop) — Monitoring Kafka
+  # ════════════════════════════════════════════════════════
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    restart: unless-stopped
+    depends_on: [kafka]
+    ports:
+      - '9000:9000'
+    environment:
+      KAFKA_BROKERCONNECT: 'kafka:29092'
+      JVM_OPTS: '-Xms32M -Xmx64M'
+
+  # ════════════════════════════════════════════════════════
+  # SPARK MASTER
+  # ════════════════════════════════════════════════════════
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: spark-master
+    restart: unless-stopped
+    environment:
+      SPARK_MODE: master
+      SPARK_RPC_AUTHENTICATION_ENABLED: 'no'
+      SPARK_RPC_ENCRYPTION_ENABLED: 'no'
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: 'no'
+      SPARK_SSL_ENABLED: 'no'
+      SPARK_MASTER_OPTS: '-Dspark.deploy.defaultCores=2'
+    ports:
+      - '8080:8080'
+      - '7077:7077'
+    volumes:
+      - spark_logs:/opt/bitnami/spark/logs
+
+  # ════════════════════════════════════════════════════════
+  # SPARK WORKER × 2
+  # ════════════════════════════════════════════════════════
+  spark-worker-1:
+    image: bitnami/spark:3.5
+    container_name: spark-worker-1
+    restart: unless-stopped
+    depends_on: [spark-master]
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 4G
+      SPARK_WORKER_CORES: 2
+
+  spark-worker-2:
+    image: bitnami/spark:3.5
+    container_name: spark-worker-2
+    restart: unless-stopped
+    depends_on: [spark-master]
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 4G
+      SPARK_WORKER_CORES: 2
+
+  # ════════════════════════════════════════════════════════
+  # MONGODB
+  # ════════════════════════════════════════════════════════
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongodb_data:/data/db
+      - ./config/mongodb/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', 'db.runCommand("ping").ok']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ════════════════════════════════════════════════════════
+  # ELASTICSEARCH
+  # ════════════════════════════════════════════════════════
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - cluster.name=disinformation-cluster
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - '9200:9200'
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -sf http://localhost:9200/_cat/health | grep -qE "green|yellow"']
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  # ════════════════════════════════════════════════════════
+  # GRAFANA
+  # ════════════════════════════════════════════════════════
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    restart: unless-stopped
+    depends_on: [elasticsearch, mongodb]
+    ports:
+      - '3000:3000'
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin2025}
+      GF_INSTALL_PLUGINS: grafana-mongodb-datasource,grafana-elasticsearch-datasource
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+
+  # ════════════════════════════════════════════════════════
+  # RSS PRODUCER
+  # ════════════════════════════════════════════════════════
+  rss-producer:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile
+    container_name: rss-producer
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+    volumes:
+      - ./logs:/app/logs
+
+  # ════════════════════════════════════════════════════════
+  # SPARK APPLICATION (Streaming NLP + Concept Drift)
+  # ════════════════════════════════════════════════════════
+  spark-app:
+    build:
+      context: ./spark-app
+      dockerfile: Dockerfile
+    container_name: spark-app
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+      MONGO_URI: mongodb://mongodb:27017
+      ES_HOST: http://elasticsearch:9200
+    volumes:
+      - ./models:/app/models   # Partage des modèles entraînés
+      - ./logs:/app/logs
+      - spark_checkpoints:/tmp/spark-checkpoints
+    deploy:
+      resources:
+        limits:
+          memory: 3.5G   # v2.2 : headroom suffisant sans swap (consommation observée : 2.28 GiB)
+
+  # ════════════════════════════════════════════════════════
+  # API FASTAPI
+  # ════════════════════════════════════════════════════════
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: api
+    restart: unless-stopped
+    depends_on: [mongodb, elasticsearch]
+    ports:
+      - '8000:8000'
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+      ES_HOST: http://elasticsearch:9200
+    volumes:
+      - ./models/onnx:/app/models/onnx:ro   # Modèle ONNX en lecture seule (v2.1)
+    deploy:
+      resources:
+        limits:
+          memory: 768M   # 256M → 768M pour le runtime ONNX (v2.1)
+
+  # ════════════════════════════════════════════════════════
+  # STREAMLIT DASHBOARD — Interface interactive (v2.1)
+  # Port 8501 — Toutes les visualisations en un seul endroit
+  # ════════════════════════════════════════════════════════
+  streamlit:
+    build:
+      context: ./streamlit-dashboard
+      dockerfile: Dockerfile
+    container_name: streamlit
+    restart: unless-stopped
+    depends_on: [mongodb, elasticsearch, api]
+    ports:
+      - '8501:8501'
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DB: disinformation_db
+      ES_HOST: http://elasticsearch:9200
+      API_BASE: http://api:8000
+      REFRESH_SEC: '30'
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+# ════════════════════════════════════════════════════════
+# VOLUMES PERSISTANTS
+# ════════════════════════════════════════════════════════
+volumes:
+  zookeeper_data:
+  zookeeper_log:
+  kafka_data:
+  mongodb_data:
+  elasticsearch_data:
+  grafana_data:
+  spark_logs:
+  spark_checkpoints:

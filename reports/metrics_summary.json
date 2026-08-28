@@ -1,0 +1,39 @@
+{
+  "best_epoch": 3,
+  "val_f1_best": 0.9392,
+  "test_f1_macro": 0.9369934649773259,
+  "test_precision": 0.9386859429456564,
+  "test_recall": 0.935064935064935,
+  "test_roc_auc": 0.9899293966943307,
+  "test_average_precision": 0.9899788418143135,
+  "confusion_matrix": {
+    "tn": 7302,
+    "fp": 475,
+    "fn": 505,
+    "tp": 7272
+  },
+  "n_test_examples": 15554,
+  "per_source_accuracy": {
+    "welfake": 0.9772,
+    "fakenewsnet": 0.9757,
+    "liar": 0.6197,
+    "masakhanews_hau": 1.0,
+    "masakhanews_swa": 1.0,
+    "masakhanews_yor": 1.0,
+    "masakhanews_sna": 0.9951,
+    "masakhanews_amh": 1.0,
+    "masakhanews_ibo": 1.0,
+    "masakhanews_orm": 0.9936,
+    "masakhanews_pcm": 0.993,
+    "masakhanews_run": 1.0,
+    "masakhanews_som": 1.0,
+    "masakhanews_tir": 1.0,
+    "masakhanews_lin": 1.0,
+    "google_news_africa_rss": 1.0
+  },
+  "per_source_f1_two_classes_only": {
+    "welfake": 0.9757,
+    "fakenewsnet": 0.9744,
+    "liar": 0.5977
+  }
+}
