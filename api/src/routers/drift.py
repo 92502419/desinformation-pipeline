@@ -75,7 +75,7 @@ def _run_recovery_only():
 @router.post('/inject')
 def inject_drift(
     background_tasks: BackgroundTasks,
-    scenario: str = Query('B', regex='^[ABCDabcd]$',
+    scenario: str = Query('B', pattern='^[ABCDabcd]$',
                           description='Scénario : A=abrupt, B=graduel, C=cyclique, D=incrémental'),
     with_recovery: bool = Query(True,
                                 description='Envoyer des articles réels après le drift pour rééquilibrer le modèle'),

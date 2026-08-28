@@ -72,13 +72,27 @@ def health():
 # ── ENDPOINT : statistiques globales ────────────────────────────────
 @app.get('/api/v1/stats', tags=['stats'])
 def get_stats():
-    """Statistiques globales en temps réel (MongoDB)"""
-    total   = db.articles.count_documents({})
-    n_fake  = db.articles.count_documents({'is_fake': 1})
-    n_real  = db.articles.count_documents({'is_fake': 0})
-    n_drift = db.drift_events.count_documents({})
-    cutoff  = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    last_1h = db.articles.count_documents({'processed_at': {'$gte': cutoff}})
+    """Statistiques globales en temps réel (MongoDB).
+
+    Dégrade proprement (comme /health) si MongoDB est indisponible, plutôt que
+    de renvoyer une erreur 500 brute — un test d'intégration (tests/test_api_health.py)
+    l'a révélé : cet endpoint plantait sans grâce quand les services Docker ne
+    sont pas démarrés.
+    """
+    try:
+        total   = db.articles.count_documents({})
+        n_fake  = db.articles.count_documents({'is_fake': 1})
+        n_real  = db.articles.count_documents({'is_fake': 0})
+        n_drift = db.drift_events.count_documents({})
+        cutoff  = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        last_1h = db.articles.count_documents({'processed_at': {'$gte': cutoff}})
+    except Exception:
+        return {
+            'total_articles': 0, 'fake_articles': 0, 'real_articles': 0,
+            'fake_rate': 0, 'drift_events': 0, 'articles_last_hour': 0,
+            'status': 'degraded', 'error': 'MongoDB indisponible',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
     return {
         'total_articles':    total,
         'fake_articles':     n_fake,
@@ -86,5 +100,6 @@ def get_stats():
         'fake_rate':         round(n_fake / total * 100, 2) if total > 0 else 0,
         'drift_events':      n_drift,
         'articles_last_hour': last_1h,
+        'status':            'ok',
         'timestamp':         datetime.now(timezone.utc).isoformat(),
     }
