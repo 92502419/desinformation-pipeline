@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "reps": 30,
+    "pool_per_class": 1600,
+    "river_version": "0.26.1",
+    "seconds": 1130.2,
+    "horizon": 500,
+    "warmup": 100,
+    "detector_params": {
+      "ADWIN_DELTA": 0.002,
+      "KSWIN_WINDOW": 100,
+      "KSWIN_ALPHA": 0.005,
+      "PH_DELTA": 0.005,
+      "PH_THRESHOLD": 50.0,
+      "ENTROPY_ADWIN_DELTA": 0.002,
+      "WEIGHTS": {
+        "ADWIN": 0.45,
+        "KSWIN": 0.35,
+        "PageHinkley": 0.2
+      },
+      "SIGNAL_HOLD": 100,
+      "COMPOSITE_THR": 0.4
+    }
+  },
+  "results": {
+    "A - abrupt": {
+      "drift_point": 1000,
+      "detectors": {
+        "ADWIN": {
+          "tpr": 1.0,
+          "fpr": 0.0,
+          "delay_mean": 79.5,
+          "delay_median": 87.0,
+          "n_detected": 30,
+          "reps": 30
+        },
+        "KSWIN": {
+          "tpr": 0.933,
+          "fpr": 0.767,
+          "delay_mean": 24.5,
+          "delay_median": 24.0,
+          "n_detected": 28,
+          "reps": 30
+        },
+        "PageHinkley": {
+          "tpr": 1.0,
+          "fpr": 0.0,
+          "delay_mean": 108.7,
+          "delay_median": 111.5,
+          "n_detected": 30,
+          "reps": 30
+        },
+        "EntropyADWIN": {
+          "tpr": 0.0,
+          "fpr": 0.0,
+          "delay_mean": null,
+          "delay_median": null,
+          "n_detected": 0,
+          "reps": 30
+        },
+        "Composite": {
+          "tpr": 1.0,
+          "fpr": 0.0,
+          "delay_mean": 79.0,
+          "delay_median": 87.0,
+          "n_detected": 30,
+          "reps": 30
+        }
+      }
+    },
+    "B - graduel": {
+      "drift_point": 1000,
+      "detectors": {
+        "ADWIN": {
+          "tpr": 0.167,
+          "fpr": 0.0,
+          "delay_mean": 432.6,
+          "delay_median": 439.0,
+          "n_detected": 5,
+          "reps": 30
+        },
+        "KSWIN": {
+          "tpr": 0.667,
+          "fpr": 0.9,
+          "delay_mean": 261.2,
+          "delay_median": 246.0,
+          "n_detected": 20,
+          "reps": 30
+        },
+        "PageHinkley": {
+          "tpr": 0.467,
+          "fpr": 0.0,
+          "delay_mean": 411.5,
+          "delay_median": 421.5,
+          "n_detected": 14,
+          "reps": 30
+        },
+        "EntropyADWIN": {
+          "tpr": 0.0,
+          "fpr": 0.0,
+          "delay_mean": null,
+          "delay_median": null,
+          "n_detected": 0,
+          "reps": 30
+        },
+        "Composite": {
+          "tpr": 0.267,
+          "fpr": 0.0,
+          "delay_mean": 421.9,
+          "delay_median": 419.5,
+          "n_detected": 8,
+          "reps": 30
+        }
+      }
+    },
+    "C - cyclique": {
+      "drift_point": 700,
+      "detectors": {
+        "ADWIN": {
+          "tpr": 1.0,
+          "fpr": 0.0,
+          "delay_mean": 87.3,
+          "delay_median": 99.0,
+          "n_detected": 30,
+          "reps": 30
+        },
+        "KSWIN": {
+          "tpr": 1.0,
+          "fpr": 0.733,
+          "delay_mean": 36.8,
+          "delay_median": 27.0,
+          "n_detected": 30,
+          "reps": 30
+        },
+        "PageHinkley": {
+          "tpr": 1.0,
+          "fpr": 0.0,
+          "delay_mean": 118.9,
+          "delay_median": 122.5,
+          "n_detected": 30,
+          "reps": 30
+        },
+        "EntropyADWIN": {
+          "tpr": 0.0,
+          "fpr": 0.0,
+          "delay_mean": null,
+          "delay_median": null,
+          "n_detected": 0,
+          "reps": 30
+        },
+        "Composite": {
+          "tpr": 1.0,
+          "fpr": 0.0,
+          "delay_mean": 86.3,
+          "delay_median": 84.0,
+          "n_detected": 30,
+          "reps": 30
+        }
+      }
+    },
+    "D - incremental": {
+      "drift_point": 1000,
+      "detectors": {
+        "ADWIN": {
+          "tpr": 0.067,
+          "fpr": 0.0,
+          "delay_mean": 391.0,
+          "delay_median": 391.0,
+          "n_detected": 2,
+          "reps": 30
+        },
+        "KSWIN": {
+          "tpr": 0.567,
+          "fpr": 0.9,
+          "delay_mean": 248.4,
+          "delay_median": 288.0,
+          "n_detected": 17,
+          "reps": 30
+        },
+        "PageHinkley": {
+          "tpr": 0.333,
+          "fpr": 0.0,
+          "delay_mean": 407.6,
+          "delay_median": 426.0,
+          "n_detected": 10,
+          "reps": 30
+        },
+        "EntropyADWIN": {
+          "tpr": 0.0,
+          "fpr": 0.0,
+          "delay_mean": null,
+          "delay_median": null,
+          "n_detected": 0,
+          "reps": 30
+        },
+        "Composite": {
+          "tpr": 0.133,
+          "fpr": 0.0,
+          "delay_mean": 396.5,
+          "delay_median": 402.0,
+          "n_detected": 4,
+          "reps": 30
+        }
+      }
+    }
+  }
+}

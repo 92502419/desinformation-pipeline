@@ -1,0 +1,366 @@
+{
+  "meta": {
+    "generated_at": "2026-09-15T14:40:28.897429+00:00",
+    "seconds": 3535.1,
+    "temperature": 3.055351,
+    "target_precision": 0.97,
+    "max_abstention": 0.15
+  },
+  "metrics": {
+    "val": {
+      "ece_before": 0.0423,
+      "ece_after": 0.0127,
+      "brier_before": 0.0507,
+      "brier_after": 0.0427,
+      "nll_before": 0.2573,
+      "nll_after": 0.1401
+    },
+    "test": {
+      "ece_before": 0.0455,
+      "ece_after": 0.0156,
+      "brier_before": 0.0529,
+      "brier_after": 0.044,
+      "nll_before": 0.2652,
+      "nll_after": 0.1427
+    }
+  },
+  "thresholds": {
+    "tau_fake": 0.7109,
+    "tau_real": 0.25
+  },
+  "selective_val": {
+    "coverage": 0.9185,
+    "abstention": 0.0815,
+    "n_uncertain": 1268,
+    "tau_fake": 0.7109,
+    "tau_real": 0.25,
+    "selective_f1": 0.9698,
+    "selective_accuracy": 0.9698,
+    "selective_risk": 0.0302,
+    "precision_fake": 0.9705,
+    "precision_real": 0.969,
+    "f1_macro_full_coverage": 0.9246
+  },
+  "selective_test": {
+    "coverage": 0.9212,
+    "abstention": 0.0788,
+    "n_uncertain": 1225,
+    "tau_fake": 0.7109,
+    "tau_real": 0.25,
+    "selective_f1": 0.9678,
+    "selective_accuracy": 0.9678,
+    "selective_risk": 0.0322,
+    "precision_fake": 0.9713,
+    "precision_real": 0.9645,
+    "f1_macro_full_coverage": 0.924
+  },
+  "per_source_abstention_test": {
+    "liar": {
+      "n": 1867,
+      "abstention_rate": 0.5828
+    },
+    "welfake": {
+      "n": 8876,
+      "abstention_rate": 0.0125
+    },
+    "fakenewsnet": {
+      "n": 2671,
+      "abstention_rate": 0.0094
+    },
+    "masakhanews_pcm": {
+      "n": 143,
+      "abstention_rate": 0.007
+    },
+    "google_news_africa_rss": {
+      "n": 20,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_amh": {
+      "n": 173,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_hau": {
+      "n": 352,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_ibo": {
+      "n": 171,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_lin": {
+      "n": 74,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_orm": {
+      "n": 157,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_run": {
+      "n": 143,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_sna": {
+      "n": 206,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_som": {
+      "n": 132,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_swa": {
+      "n": 245,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_tir": {
+      "n": 117,
+      "abstention_rate": 0.0
+    },
+    "masakhanews_yor": {
+      "n": 207,
+      "abstention_rate": 0.0
+    }
+  },
+  "risk_coverage_test": [
+    {
+      "confidence_cut": 0.5,
+      "coverage": 1.0,
+      "risk": 0.0642,
+      "n_kept": 15554
+    },
+    {
+      "confidence_cut": 0.5654,
+      "coverage": 0.9769,
+      "risk": 0.0544,
+      "n_kept": 15195
+    },
+    {
+      "confidence_cut": 0.6314,
+      "coverage": 0.9538,
+      "risk": 0.0453,
+      "n_kept": 14836
+    },
+    {
+      "confidence_cut": 0.6995,
+      "coverage": 0.9308,
+      "risk": 0.0365,
+      "n_kept": 14477
+    },
+    {
+      "confidence_cut": 0.7653,
+      "coverage": 0.9077,
+      "risk": 0.0276,
+      "n_kept": 14118
+    },
+    {
+      "confidence_cut": 0.8439,
+      "coverage": 0.8846,
+      "risk": 0.0204,
+      "n_kept": 13759
+    },
+    {
+      "confidence_cut": 0.9159,
+      "coverage": 0.8615,
+      "risk": 0.0122,
+      "n_kept": 13400
+    },
+    {
+      "confidence_cut": 0.9597,
+      "coverage": 0.8384,
+      "risk": 0.0058,
+      "n_kept": 13041
+    },
+    {
+      "confidence_cut": 0.9724,
+      "coverage": 0.8154,
+      "risk": 0.0034,
+      "n_kept": 12682
+    },
+    {
+      "confidence_cut": 0.9771,
+      "coverage": 0.7923,
+      "risk": 0.0023,
+      "n_kept": 12323
+    },
+    {
+      "confidence_cut": 0.9795,
+      "coverage": 0.7692,
+      "risk": 0.0017,
+      "n_kept": 11964
+    },
+    {
+      "confidence_cut": 0.981,
+      "coverage": 0.7461,
+      "risk": 0.0012,
+      "n_kept": 11605
+    },
+    {
+      "confidence_cut": 0.982,
+      "coverage": 0.7231,
+      "risk": 0.0011,
+      "n_kept": 11247
+    },
+    {
+      "confidence_cut": 0.9828,
+      "coverage": 0.7,
+      "risk": 0.0006,
+      "n_kept": 10888
+    },
+    {
+      "confidence_cut": 0.9835,
+      "coverage": 0.6769,
+      "risk": 0.0005,
+      "n_kept": 10529
+    },
+    {
+      "confidence_cut": 0.9841,
+      "coverage": 0.6539,
+      "risk": 0.0004,
+      "n_kept": 10170
+    },
+    {
+      "confidence_cut": 0.9847,
+      "coverage": 0.6308,
+      "risk": 0.0002,
+      "n_kept": 9811
+    },
+    {
+      "confidence_cut": 0.9854,
+      "coverage": 0.6077,
+      "risk": 0.0001,
+      "n_kept": 9452
+    },
+    {
+      "confidence_cut": 0.9862,
+      "coverage": 0.5846,
+      "risk": 0.0001,
+      "n_kept": 9093
+    },
+    {
+      "confidence_cut": 0.987,
+      "coverage": 0.5615,
+      "risk": 0.0001,
+      "n_kept": 8734
+    },
+    {
+      "confidence_cut": 0.9876,
+      "coverage": 0.5384,
+      "risk": 0.0,
+      "n_kept": 8375
+    },
+    {
+      "confidence_cut": 0.988,
+      "coverage": 0.5154,
+      "risk": 0.0,
+      "n_kept": 8016
+    },
+    {
+      "confidence_cut": 0.9882,
+      "coverage": 0.4923,
+      "risk": 0.0,
+      "n_kept": 7657
+    },
+    {
+      "confidence_cut": 0.9884,
+      "coverage": 0.4692,
+      "risk": 0.0,
+      "n_kept": 7298
+    },
+    {
+      "confidence_cut": 0.9885,
+      "coverage": 0.4462,
+      "risk": 0.0,
+      "n_kept": 6940
+    },
+    {
+      "confidence_cut": 0.9886,
+      "coverage": 0.4231,
+      "risk": 0.0,
+      "n_kept": 6581
+    },
+    {
+      "confidence_cut": 0.9887,
+      "coverage": 0.4,
+      "risk": 0.0,
+      "n_kept": 6222
+    },
+    {
+      "confidence_cut": 0.9887,
+      "coverage": 0.3769,
+      "risk": 0.0,
+      "n_kept": 5863
+    },
+    {
+      "confidence_cut": 0.9888,
+      "coverage": 0.3539,
+      "risk": 0.0,
+      "n_kept": 5504
+    },
+    {
+      "confidence_cut": 0.9889,
+      "coverage": 0.3308,
+      "risk": 0.0,
+      "n_kept": 5145
+    },
+    {
+      "confidence_cut": 0.9891,
+      "coverage": 0.3077,
+      "risk": 0.0,
+      "n_kept": 4786
+    },
+    {
+      "confidence_cut": 0.99,
+      "coverage": 0.2846,
+      "risk": 0.0,
+      "n_kept": 4427
+    },
+    {
+      "confidence_cut": 0.9904,
+      "coverage": 0.2615,
+      "risk": 0.0,
+      "n_kept": 4068
+    },
+    {
+      "confidence_cut": 0.9906,
+      "coverage": 0.2385,
+      "risk": 0.0,
+      "n_kept": 3709
+    },
+    {
+      "confidence_cut": 0.9908,
+      "coverage": 0.2154,
+      "risk": 0.0,
+      "n_kept": 3350
+    },
+    {
+      "confidence_cut": 0.991,
+      "coverage": 0.1923,
+      "risk": 0.0,
+      "n_kept": 2991
+    },
+    {
+      "confidence_cut": 0.9911,
+      "coverage": 0.1693,
+      "risk": 0.0,
+      "n_kept": 2633
+    },
+    {
+      "confidence_cut": 0.9913,
+      "coverage": 0.1462,
+      "risk": 0.0,
+      "n_kept": 2274
+    },
+    {
+      "confidence_cut": 0.9922,
+      "coverage": 0.1231,
+      "risk": 0.0,
+      "n_kept": 1915
+    },
+    {
+      "confidence_cut": 0.993,
+      "coverage": 0.1,
+      "risk": 0.0,
+      "n_kept": 1556
+    }
+  ],
+  "f1_macro_baseline_075_uncalibrated": 0.9327
+}

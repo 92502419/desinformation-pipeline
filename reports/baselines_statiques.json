@@ -1,0 +1,55 @@
+{
+  "meta": {
+    "generated_at": "2026-09-15T14:12:17",
+    "n_train": 46660,
+    "n_test": 15554,
+    "vectorizer": "TfidfVectorizer(max_features=50000, ngram_range=(1,2), min_df=2, sublinear_tf=True)",
+    "note": "Même split que Continual-DistilBERT (data/processed/{train,test}.csv). Aucune donnée inventée."
+  },
+  "baselines": [
+    {
+      "name": "TF-IDF + Régression Logistique",
+      "f1_macro": 0.9155,
+      "precision": 0.8976,
+      "recall": 0.938,
+      "roc_auc": 0.9759,
+      "average_precision": 0.9754,
+      "confusion_matrix": {
+        "tn": 6945,
+        "fp": 832,
+        "fn": 482,
+        "tp": 7295
+      },
+      "train_seconds": 6.6
+    },
+    {
+      "name": "TF-IDF + Linear SVM",
+      "f1_macro": 0.9178,
+      "precision": 0.9091,
+      "recall": 0.9285,
+      "roc_auc": 0.9726,
+      "average_precision": 0.9714,
+      "confusion_matrix": {
+        "tn": 7055,
+        "fp": 722,
+        "fn": 556,
+        "tp": 7221
+      },
+      "train_seconds": 1.8
+    }
+  ],
+  "distilbert_reference": {
+    "name": "Continual-DistilBERT (référence, reports/metrics_summary.json)",
+    "f1_macro": 0.937,
+    "precision": 0.9387,
+    "recall": 0.9351,
+    "roc_auc": 0.9899,
+    "average_precision": 0.99,
+    "confusion_matrix": {
+      "tn": 7302,
+      "fp": 475,
+      "fn": 505,
+      "tp": 7272
+    }
+  }
+}

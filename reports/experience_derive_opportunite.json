@@ -1,0 +1,100 @@
+{
+  "meta": {
+    "seed": 0,
+    "N": 2200,
+    "pre": 800,
+    "drift": 1400,
+    "pfake_campaign": 0.8,
+    "chunk": 40,
+    "phases": {
+      "P0 (pre-campagne, welfake/fnn)": [
+        0,
+        800
+      ],
+      "P1 (debut campagne)": [
+        800,
+        1200
+      ],
+      "P2 (campagne etablie, apres adaptation)": [
+        1200,
+        2200
+      ]
+    },
+    "drift_point": 800,
+    "lr_base": 1e-05,
+    "lr_drift": 5e-05,
+    "roll_win": 200,
+    "n_online_updates": 55,
+    "mean_loss": 0.3682,
+    "river_version": "0.26.1",
+    "seconds": 1502.4,
+    "force_lr": 0.0,
+    "note": "Bras dynamique = calque de spark-app/src/nlp_classifier.py::online_update. LR pilote automatiquement par le tri-detecteur drift_monitor.py sur le p_fake du flux."
+  },
+  "per_phase": {
+    "P0 (pre-campagne, welfake/fnn)": {
+      "n": 800,
+      "f1_static": 0.97,
+      "f1_dynamic": 0.97
+    },
+    "P1 (debut campagne)": {
+      "n": 400,
+      "f1_static": 0.7116,
+      "f1_dynamic": 0.7116
+    },
+    "P2 (campagne etablie, apres adaptation)": {
+      "n": 1000,
+      "f1_static": 0.7183,
+      "f1_dynamic": 0.7312
+    }
+  },
+  "probe_curve": [
+    [
+      40,
+      0.9797
+    ],
+    [
+      320,
+      0.9797
+    ],
+    [
+      600,
+      0.9797
+    ],
+    [
+      880,
+      0.9797
+    ],
+    [
+      1160,
+      0.9797
+    ],
+    [
+      1440,
+      0.9797
+    ],
+    [
+      1720,
+      0.9797
+    ],
+    [
+      2000,
+      0.9797
+    ],
+    [
+      2200,
+      0.9797
+    ]
+  ],
+  "verdict": {
+    "detecteur_a_declenche": true,
+    "index_1re_detection": 880,
+    "delai_detection_msg": 80,
+    "gain_dynamique_vs_statique_P2_pts_f1": 1.29,
+    "recuperation_dynamique_P2_moins_P0_pts_f1": -23.88,
+    "oubli_sonde_pts_f1": 0.0,
+    "f1_sonde_statique": 0.9797,
+    "f1_sonde_dynamique_fin": 0.9797,
+    "derive_est_opportunite": false
+  }
+}

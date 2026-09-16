@@ -1,10 +1,13 @@
 # spark-app/src/nlp_classifier.py — Classification ONNX + Online Learning
-# v2.0 : reservoir équilibré par classe pour éviter le biais vers fake
+# v2.1 : reservoir équilibré par classe + calibration probabiliste (temperature
+# scaling + prédiction sélective, voir calibration.py) sur l'inférence ONNX
 import os, torch, numpy as np
 from transformers import DistilBertTokenizerFast
 from onnxruntime import InferenceSession, SessionOptions
 from torch.optim import SGD
 import torch.nn.functional as F
+
+from calibration import ProbabilityCalibrator
 
 
 MODEL_PRETRAINED    = os.getenv('MODEL_PRETRAINED_PATH', '/app/models/pretrained')
@@ -37,6 +40,11 @@ class ContinualDistilBERT:
         self.pt_model.eval()  # eval par défaut — train() uniquement pendant online_update
         self.optimizer = SGD(self.pt_model.parameters(), lr=ONLINE_LR_BASE, momentum=0.9, weight_decay=0.01)
 
+        self.calibrator = ProbabilityCalibrator.load()
+        print(f'[NLP] Calibration : T={self.calibrator.temperature:.4f}, '
+              f'tau_fake={self.calibrator.tau_fake:.4f}, tau_real={self.calibrator.tau_real:.4f}, '
+              f'fitted={self.calibrator.fitted}, selective={self.calibrator.selective}')
+
         # Reservoirs SÉPARÉS — évite que le drift injector sature le buffer de fake
         self.reservoir_fake: list = []
         self.reservoir_real: list = []
@@ -51,7 +59,13 @@ class ContinualDistilBERT:
         return self.reservoir_fake + self.reservoir_real
 
     def predict(self, title: str, body: str = '') -> dict:
-        """Inférence ONNX INT8 (~5-6 ms) — 100 % numpy, zéro tensor PyTorch."""
+        """Inférence ONNX INT8 (~19 ms mesurés, cf. calibrate_model.py) + calibration.
+
+        La probabilité affichée est corrigée par temperature scaling (ordre des
+        scores et AUC inchangés) ; `verdict` ajoute la zone grise « uncertain »
+        de la prédiction sélective sans changer `label` (0/1), conservé pour la
+        compatibilité de tout l'aval (MongoDB, Elasticsearch, Grafana, API).
+        """
         text = f'{title[:200]} [SEP] {body[:100]}'
         enc  = self.tokenizer(text, max_length=128, padding='max_length',
                               truncation=True, return_tensors='np')
@@ -59,10 +73,14 @@ class ContinualDistilBERT:
             'input_ids':      enc['input_ids'].astype(np.int64),
             'attention_mask': enc['attention_mask'].astype(np.int64)
         })[0][0]  # shape (2,)
-        e = np.exp(logits - logits.max())  # softmax numeriquement stable
-        probs = e / e.sum()
-        label = 1 if float(probs[1]) >= 0.75 else 0
-        return {'label': label, 'confidence': float(probs[label]), 'p_fake': float(probs[1])}
+        decision = self.calibrator.decide(logits=logits)
+        return {
+            'label':       decision['label'],
+            'verdict':     decision['verdict'],
+            'confidence':  decision['confidence'],
+            'p_fake':      decision['p_fake'],
+            'p_fake_raw':  decision['p_fake_raw'],
+        }
 
     def reservoir_update(self, text: str, label: int):
         """Reservoir sampling équilibré : maintient 50 % fake / 50 % réel.

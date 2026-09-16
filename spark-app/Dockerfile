@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ENV PYSPARK_PYTHON=python3
 ENV PYSPARK_DRIVER_PYTHON=python3
+ENV PYTHONUNBUFFERED=1
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir 'packaging>=23.2'

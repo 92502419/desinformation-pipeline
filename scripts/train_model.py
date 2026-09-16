@@ -75,7 +75,7 @@ print(f'Utilisation de : {DEVICE}')
 if DEVICE == 'cuda':
     print(f'GPU : {torch.cuda.get_device_name(0)} | VRAM totale : {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} Go')
 else:
-    print('⚠️ CPU détecté → batch_size=16 recommandé. Google Colab pour accélérer.')
+    print('CPU détecté → batch_size=16 recommandé. Google Colab pour accélérer.')
 
 for path in [args.train_csv, args.val_csv]:
     if not os.path.exists(path):
@@ -213,9 +213,9 @@ if args.resume and os.path.exists(RESUME_PATH):
         history = ckpt.get('history', [])
         epochs_no_improve = ckpt.get('epochs_no_improve', 0)
         best_epoch = ckpt.get('best_epoch', 0)
-        print(f'✅ Reprise depuis {RESUME_PATH} : epoch={start_epoch}, batch={start_batch}, best_f1={best_f1:.4f}')
+        print(f'Reprise depuis {RESUME_PATH} : epoch={start_epoch}, batch={start_batch}, best_f1={best_f1:.4f}')
     except Exception as e:
-        print(f'⚠️ Checkpoint de reprise illisible ({e}) — on repart de zéro (comportement voulu : '
+        print(f'Checkpoint de reprise illisible ({e}) — on repart de zéro (comportement voulu : '
               f'ne jamais planter sur un .pt corrompu).')
         start_epoch, start_batch = 0, 0
 
@@ -303,10 +303,10 @@ for epoch in range(start_epoch, args.epochs):
         epochs_no_improve = 0
         model.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
-        print(f'  ✅ Meilleur modèle sauvegardé ! Val F1 = {best_f1:.4f}')
+        print(f'Meilleur modèle sauvegardé ! Val F1 = {best_f1:.4f}')
     else:
         epochs_no_improve += 1
-        print(f'  ⏳ Pas d\'amélioration depuis {epochs_no_improve} époque(s) '
+        print(f'Pas d\'amélioration depuis {epochs_no_improve} époque(s) '
               f'(meilleur : epoch {best_epoch}, Val F1 = {best_f1:.4f}) — patience = {args.patience}')
 
     # checkpoint de reprise en fin d'epoch (permet de reprendre à l'epoch suivante)
@@ -314,7 +314,7 @@ for epoch in range(start_epoch, args.epochs):
     start_batch = 0
 
     if val_f1 >= args.target_f1:
-        print(f"🎯 F1 >= {args.target_f1} — arrêt anticipé à l'epoch {epoch+1}")
+        print(f"F1 >= {args.target_f1} — arrêt anticipé à l'epoch {epoch+1}")
         break
 
     # ── Early stopping par patience (anti-surapprentissage — mémoire §OS 2.3) ─
@@ -325,7 +325,7 @@ for epoch in range(start_epoch, args.epochs):
     # le sur-apprentissage visible sur le Train F1 sans aucun bénéfice pour le
     # modèle réellement conservé — d'où cet arrêt anticipé.
     if args.patience and epochs_no_improve >= args.patience:
-        print(f"🛑 Early stopping : {epochs_no_improve} époques sans amélioration "
+        print(f"Early stopping : {epochs_no_improve} époques sans amélioration "
               f"(patience={args.patience}) — arrêt à l'epoch {epoch+1}. "
               f"Meilleur modèle conservé : epoch {best_epoch} (Val F1 = {best_f1:.4f}).")
         break

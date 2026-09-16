@@ -1,6 +1,7 @@
 # api/Dockerfile — API FastAPI
 # Python 3.12-slim, uvicorn multi-workers
 FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel

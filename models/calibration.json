@@ -1,0 +1,22 @@
+{
+  "temperature": 3.055351,
+  "tau_fake": 0.7109,
+  "tau_real": 0.25,
+  "fitted": true,
+  "selective": true,
+  "fitted_on": "data/processed/val/val.csv",
+  "fitted_at": "2026-09-15T14:40:26.925061+00:00",
+  "n_val": 15554,
+  "target_precision": 0.97,
+  "ece_before": 0.0455,
+  "ece_after": 0.0156,
+  "brier_before": 0.0529,
+  "brier_after": 0.044,
+  "nll_before": 0.2652,
+  "nll_after": 0.1427,
+  "coverage": 0.9212,
+  "selective_f1": 0.9678,
+  "selective_risk": 0.0322,
+  "f1_macro_full_coverage": 0.924,
+  "f1_macro_baseline_075_uncalibrated": 0.9327
+}

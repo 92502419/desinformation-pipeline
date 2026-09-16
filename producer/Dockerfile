@@ -1,6 +1,6 @@
-# producer/Dockerfile — VERSION CORRIGÉE
-# ✅ python:3.12-slim (PAS 3.11-slim)
+# producer/Dockerfile
 FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1
 
 
 WORKDIR /app

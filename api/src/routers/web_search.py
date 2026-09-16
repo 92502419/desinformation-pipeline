@@ -1,9 +1,12 @@
 # api/src/routers/web_search.py — Recherche web + classification ML en temps réel
 # Flux : DuckDuckGo News → ONNX (inférence directe) → MongoDB + Kafka (apprentissage)
-import os, uuid, json, logging, time
+import os, sys, uuid, json, logging, time
 from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime, timezone
 from pymongo import MongoClient
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))  # /app/src (calibration.py)
+from calibration import ProbabilityCalibrator
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +40,17 @@ def _cache_set(key: str, data):
 # ── Chargement lazy du modèle ONNX (une seule fois au premier appel) ─────────
 _ort_session  = None
 _tokenizer    = None
+_calibrator   = None
+
+def _get_calibrator() -> ProbabilityCalibrator:
+    """Charge models/calibration.json une seule fois (repli T=1, seuil 0,75 si absent)."""
+    global _calibrator
+    if _calibrator is None:
+        _calibrator = ProbabilityCalibrator.load()
+        log.info("[web-search] Calibration : T=%.4f, tau_fake=%.4f, tau_real=%.4f, fitted=%s",
+                 _calibrator.temperature, _calibrator.tau_fake, _calibrator.tau_real,
+                 _calibrator.fitted)
+    return _calibrator
 
 def _get_model():
     global _ort_session, _tokenizer
@@ -72,6 +86,7 @@ def _classify(texts: list[str]) -> list[dict]:
     """
     import numpy as np
     session, tokenizer = _get_model()
+    calibrator = _get_calibrator()
     results = []
     for text in texts:
         enc = tokenizer(
@@ -91,20 +106,15 @@ def _classify(texts: list[str]) -> list[dict]:
             ).astype(np.int64)
 
         logits = session.run(None, inputs)[0][0]
-        probs  = _softmax(logits)
-        p_fake = float(probs[1])
+        decision = calibrator.decide(logits=logits)
         results.append({
-            "is_fake":    1 if p_fake >= 0.75 else 0,
-            "confidence": round(float(max(probs)), 4),
-            "p_fake":     round(p_fake, 4),
+            "is_fake":    decision["label"],
+            "verdict":    decision["verdict"],   # fake / real / uncertain
+            "confidence": decision["confidence"],
+            "p_fake":     decision["p_fake"],
+            "p_fake_raw": decision["p_fake_raw"],
         })
     return results
-
-
-def _softmax(x):
-    import numpy as np
-    e = np.exp(x - np.max(x))
-    return e / e.sum()
 
 
 def _publish_to_kafka(articles: list):

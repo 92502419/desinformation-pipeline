@@ -145,8 +145,10 @@ def process_batch(batch_df, batch_id):
             'timestamp':       row.timestamp or now_iso,
             'processed_at':    now_iso,
             'is_fake':         pred['label'],
+            'verdict':         pred['verdict'],
             'confidence':      pred['confidence'],
             'p_fake':          pred['p_fake'],
+            'p_fake_raw':      pred['p_fake_raw'],
             'gdelt_tone':      float(row.gdelt_tone or 0.0),
             'drift_score':     drift_result['composite_score'],
             'drift_active':    drift_result['drift'],
@@ -160,7 +162,7 @@ def process_batch(batch_df, batch_id):
         # Un article classé fake avec 90% de confiance est un bon exemple d'apprentissage.
         # Un article incertain (60-80%) risque d'être mal étiqueté → skip.
         text = f"{row.title} [SEP] {(row.body or '')[:100]}"
-        if pred['confidence'] > 0.85:
+        if pred['confidence'] > 0.85 and pred['verdict'] != 'uncertain':
             batch_texts.append(text)
             batch_labels.append(pred['label'])
             nlp_model.reservoir_update(text, pred['label'])

@@ -25,6 +25,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 384M
 
   # ════════════════════════════════════════════════════════
   # KAFKA BROKER
@@ -57,6 +61,10 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   # ════════════════════════════════════════════════════════
   # KAFKA UI (Kafdrop) — Monitoring Kafka
@@ -71,12 +79,16 @@ services:
     environment:
       KAFKA_BROKERCONNECT: 'kafka:29092'
       JVM_OPTS: '-Xms32M -Xmx64M'
+    deploy:
+      resources:
+        limits:
+          memory: 192M
 
   # ════════════════════════════════════════════════════════
   # SPARK MASTER
   # ════════════════════════════════════════════════════════
   spark-master:
-    image: bitnami/spark:3.5
+    image: bitnamilegacy/spark:3.5.6
     container_name: spark-master
     restart: unless-stopped
     environment:
@@ -91,31 +103,47 @@ services:
       - '7077:7077'
     volumes:
       - spark_logs:/opt/bitnami/spark/logs
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   # ════════════════════════════════════════════════════════
   # SPARK WORKER × 2
+  # v2 (2026-08-28) : SPARK_WORKER_MEMORY réduit de 4G à 1200M et limite
+  # container ajoutée — 4G par worker (8G pour les 2) était irréaliste sur
+  # cette machine à 14 Go de RAM déjà chargée, et probablement une des
+  # causes indirectes de l'incident du 26/08/2026.
   # ════════════════════════════════════════════════════════
   spark-worker-1:
-    image: bitnami/spark:3.5
+    image: bitnamilegacy/spark:3.5.6
     container_name: spark-worker-1
     restart: unless-stopped
     depends_on: [spark-master]
     environment:
       SPARK_MODE: worker
       SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_MEMORY: 4G
+      SPARK_WORKER_MEMORY: 1200M
       SPARK_WORKER_CORES: 2
+    deploy:
+      resources:
+        limits:
+          memory: 1400M
 
   spark-worker-2:
-    image: bitnami/spark:3.5
+    image: bitnamilegacy/spark:3.5.6
     container_name: spark-worker-2
     restart: unless-stopped
     depends_on: [spark-master]
     environment:
       SPARK_MODE: worker
       SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_MEMORY: 4G
+      SPARK_WORKER_MEMORY: 1200M
       SPARK_WORKER_CORES: 2
+    deploy:
+      resources:
+        limits:
+          memory: 1400M
 
   # ════════════════════════════════════════════════════════
   # MONGODB
@@ -134,6 +162,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   # ════════════════════════════════════════════════════════
   # ELASTICSEARCH
@@ -161,6 +193,10 @@ services:
       interval: 20s
       timeout: 10s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
   # ════════════════════════════════════════════════════════
   # GRAFANA
@@ -175,12 +211,20 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin2025}
-      GF_INSTALL_PLUGINS: grafana-mongodb-datasource,grafana-elasticsearch-datasource
+      # grafana-elasticsearch-datasource retiré : Elasticsearch est un datasource
+      # cœur de Grafana (aucun plugin requis) ; ce nom renvoyait un 404 et bloquait
+      # le démarrage du conteneur en boucle de redémarrage.
+      GF_INSTALL_PLUGINS: grafana-mongodb-datasource
       GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: grafana-mongodb-datasource
     volumes:
       - grafana_data:/var/lib/grafana
       - ./config/grafana/provisioning:/etc/grafana/provisioning
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   # ════════════════════════════════════════════════════════
   # RSS PRODUCER
@@ -199,6 +243,10 @@ services:
       KAFKA_BROKER: kafka:29092
     volumes:
       - ./logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 256M   # scraper asyncio léger (feedparser + httpx) — consommation observée < 120 MiB
 
   # ════════════════════════════════════════════════════════
   # SPARK APPLICATION (Streaming NLP + Concept Drift)
@@ -221,6 +269,8 @@ services:
       KAFKA_BROKER: kafka:29092
       MONGO_URI: mongodb://mongodb:27017
       ES_HOST: http://elasticsearch:9200
+    ports:
+      - '4040:4040'   # Spark UI du driver local[2] (voir spark_streaming.py) — non exposé auparavant
     volumes:
       - ./models:/app/models   # Partage des modèles entraînés
       - ./logs:/app/logs
@@ -239,15 +289,18 @@ services:
       dockerfile: Dockerfile
     container_name: api
     restart: unless-stopped
-    depends_on: [mongodb, elasticsearch]
+    depends_on: [mongodb, elasticsearch, kafka]
     ports:
       - '8000:8000'
     env_file: .env
     environment:
       MONGO_URI: mongodb://mongodb:27017
       ES_HOST: http://elasticsearch:9200
+      KAFKA_BROKER: kafka:29092
     volumes:
       - ./models/onnx:/app/models/onnx:ro   # Modèle ONNX en lecture seule (v2.1)
+      - ./models/calibration.json:/app/models/calibration.json:ro   # scripts/calibrate_model.py — repli T=1 si absent
+      - ./scripts:/app/scripts:ro           # inject_drift_simulation.py — requis par /api/v1/drift/inject|recover
     deploy:
       resources:
         limits:

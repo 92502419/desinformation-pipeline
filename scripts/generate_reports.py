@@ -46,7 +46,7 @@ INTERPRETATIONS = []  # (titre, fichier_png, texte_interprétation) — pour le 
 
 def add_section(title, fig_path, text):
     INTERPRETATIONS.append((title, fig_path, text))
-    print(f'✅ {title} -> {fig_path}')
+    print(f'{title} -> {fig_path}')
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -219,7 +219,7 @@ add_section(
     f"Le corpus d'entraînement est strictement équilibré 50/50 par sous-échantillonnage (voir "
     f"`scripts/preprocess_data.py`), ce qui évite le biais de classe documenté dans le mémoire (le corpus brut "
     f"était à ~58,7 % fake). WELFake domine la composition ({train_df['source'].value_counts().get('welfake',0)} "
-    f"exemples), suivi de FakeNewsNet et LIAR ; le sous-corpus africain multilingue (MasakhaNEWS + RSS, 11 "
+    f"exemples), suivi de FakeNewsNet et LIAR ; le sous-corpus africain multilingue (MasakhaNEWS + RSS, 12 "
     f"langues) apporte une diversité linguistique absente des 3 autres datasets, renforcée par le "
     f"sur-échantillonnage `--africa_boost=5` pendant l'entraînement."
 )
@@ -309,8 +309,8 @@ else:
 add_section(
     'Matrice de corrélation (features dérivées)',
     'figures/07_matrice_correlation.png',
-    f"Corrélation label ↔ probabilité prédite = {corr_label_pfake:.2f} : forte cohérence entre les prédictions "
-    f"du modèle et la vérité terrain, cohérent avec l'AUC observée. Corrélation longueur du titre ↔ label = "
+    f"Corrélation label / probabilité prédite = {corr_label_pfake:.2f} : forte cohérence entre les prédictions "
+    f"du modèle et la vérité terrain, cohérent avec l'AUC observée. Corrélation longueur du titre / label = "
     f"{corr_len_label:.2f} : {len_comment} "
     f"— une corrélation longueur/label proche de 0 est plutôt rassurante : elle indique que le modèle doit "
     f"apprendre du contenu sémantique, pas d'un artefact de longueur de texte."
@@ -394,7 +394,7 @@ with open(f'{OUT_DIR}/RAPPORT_ANALYSE.md', 'w', encoding='utf-8') as f:
     f.write(f"- **Average Precision (test)** : {ap:.4f}\n")
     f.write(f"- **Matrice de confusion (test)** : TP={tp}, TN={tn}, FP={fp}, FN={fn}\n")
     f.write(f"- **Nombre d'exemples de test** : {len(test_df)}\n\n")
-    f.write('> ⚠️ Ces chiffres sont ceux, et uniquement ceux, obtenus par le ré-entraînement réel du 27-28/08/2026 '
+    f.write('>Ces chiffres sont ceux, et uniquement ceux, obtenus par le ré-entraînement réel du 27-28/08/2026 '
             'sur cette machine. Voir README.md, section "Incident du 26/08/2026 et reprise", avant de les '
             'comparer à ceux déjà rédigés dans le mémoire v7.\n\n')
     f.write('## Figures et interprétations\n\n')
@@ -404,7 +404,7 @@ with open(f'{OUT_DIR}/RAPPORT_ANALYSE.md', 'w', encoding='utf-8') as f:
             f.write(f'![{title}]({fig_path})\n\n')
         f.write(f'{text}\n\n')
 
-print(f'\n✅ Rapport complet généré dans {OUT_DIR}/ :')
+print(f'\nRapport complet généré dans {OUT_DIR}/ :')
 print(f'   - {OUT_DIR}/RAPPORT_ANALYSE.md (rapport consolidé avec interprétations)')
 print(f'   - {OUT_DIR}/metrics_summary.json (métriques brutes)')
 print(f'   - {OUT_DIR}/analyse_erreurs.md (faux positifs / faux négatifs)')

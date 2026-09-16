@@ -28,6 +28,6 @@ Généré automatiquement par `scripts/generate_reports.py`.
 | There’s wildly conflicting information about what FBI actually found in renewed Clinton email probe | welfake | 0.000 |
 | proudleader.com | fakenewsnet | 0.000 |
 | Neon Nettle | fakenewsnet | 0.000 |
-| Miss Universe Guayana 2016 arrestada con 2kilos en London Airport😱 | fakenewsnet | 0.000 |
+| Miss Universe Guayana 2016 arrestada con 2kilos en London Airport| fakenewsnet | 0.000 |
 | 10 Things You Didn't Know About Nancy Pelosi | fakenewsnet | 0.000 |
 | Economic inequality in Multnomah County has a face -- and a name. It has 90,000 faces and names -- the number of county  | liar | 0.000 |

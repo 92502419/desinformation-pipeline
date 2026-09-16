@@ -1,6 +1,6 @@
 # producer/src/gdelt_client.py
 import httpx, asyncio, json, hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 GDELT_API_BASE = 'https://api.gdeltproject.org/api/v2/doc/doc'
@@ -40,7 +40,7 @@ async def fetch_gdelt_articles(theme: str = 'FAKE_NEWS,DISINFORMATION',
                     'source':          a.get('domain', 'gdelt'),
                     'source_category': 'gdelt',
                     'language':        a.get('language', 'English').lower()[:2],
-                    'timestamp':       datetime.utcnow().isoformat(),
+                    'timestamp':       datetime.now(timezone.utc).isoformat(),
                     'gdelt_tone':      tone_val,
                 })
             return result

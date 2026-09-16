@@ -1,0 +1,149 @@
+{
+  "meta": {
+    "generated_at": "2026-09-15T14:25:51",
+    "rounds": 15,
+    "local_epochs": 1,
+    "n_features_hashing": 262144,
+    "organizations": {
+      "org_afrique": 6370,
+      "org_fakenewsnet": 8036,
+      "org_liar": 5526,
+      "org_welfake": 26728
+    },
+    "n_test": 15554,
+    "seconds": 108.7,
+    "note": "Preuve de concept FedAvg (HashingVectorizer + SGDClassifier logistique). Federer reellement Continual-DistilBERT entre organisations est hors de portee du materiel de developpement (CPU seul) — voir memoire, Chapitre 5, Recommandation 3."
+  },
+  "solo": [
+    {
+      "name": "SOLO — org_afrique",
+      "f1_macro": null,
+      "precision": null,
+      "recall": null,
+      "confusion_matrix": null,
+      "note": "corpus mono-classe (label=0 uniquement) — entrainement solo impossible"
+    },
+    {
+      "name": "SOLO — org_fakenewsnet",
+      "f1_macro": 0.5582,
+      "precision": 0.5524,
+      "recall": 0.7184,
+      "confusion_matrix": {
+        "tn": 3250,
+        "fp": 4527,
+        "fn": 2190,
+        "tp": 5587
+      }
+    },
+    {
+      "name": "SOLO — org_liar",
+      "f1_macro": 0.4637,
+      "precision": 0.4774,
+      "recall": 0.5947,
+      "confusion_matrix": {
+        "tn": 2714,
+        "fp": 5063,
+        "fn": 3152,
+        "tp": 4625
+      }
+    },
+    {
+      "name": "SOLO — org_welfake",
+      "f1_macro": 0.6508,
+      "precision": 0.6142,
+      "recall": 0.96,
+      "confusion_matrix": {
+        "tn": 3087,
+        "fp": 4690,
+        "fn": 311,
+        "tp": 7466
+      }
+    }
+  ],
+  "federated": {
+    "name": "FEDERE (FedAvg, aucune donnee brute partagee)",
+    "f1_macro": 0.6598,
+    "precision": 0.6213,
+    "recall": 0.9177,
+    "confusion_matrix": {
+      "tn": 3427,
+      "fp": 4350,
+      "fn": 640,
+      "tp": 7137
+    }
+  },
+  "federated_curve": [
+    {
+      "round": 1,
+      "f1_macro": 0.658
+    },
+    {
+      "round": 2,
+      "f1_macro": 0.6596
+    },
+    {
+      "round": 3,
+      "f1_macro": 0.6599
+    },
+    {
+      "round": 4,
+      "f1_macro": 0.66
+    },
+    {
+      "round": 5,
+      "f1_macro": 0.6599
+    },
+    {
+      "round": 6,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 7,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 8,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 9,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 10,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 11,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 12,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 13,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 14,
+      "f1_macro": 0.6598
+    },
+    {
+      "round": 15,
+      "f1_macro": 0.6598
+    }
+  ],
+  "centralized": {
+    "name": "CENTRALISE (upper bound, donnees poolees)",
+    "f1_macro": 0.9088,
+    "precision": 0.8865,
+    "recall": 0.9378,
+    "confusion_matrix": {
+      "tn": 6843,
+      "fp": 934,
+      "fn": 484,
+      "tp": 7293
+    }
+  }
+}

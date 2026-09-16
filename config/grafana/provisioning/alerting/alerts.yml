@@ -1,0 +1,186 @@
+# config/grafana/provisioning/alerting/alerts.yml — Règles d'alerte Grafana
+# KOMOSSI Sosso — Master BIG DATA IA, Institut ESI — UCAO-UUT, 2025-2026
+#
+# Comble un écart documenté dans reports/CONFORMITE_PROPOSITION.md (section F/RA5) :
+# les 5 règles d'alerte décrites dans le mémoire (taux de fake, drift détecté/confirmé,
+# confiance moyenne) étaient jusqu'ici évaluées uniquement côté Streamlit (page
+# Alertes) ; elles sont désormais aussi provisionnées nativement dans Grafana, sur
+# les mêmes seuils et les mêmes champs que le tableau de bord (pipeline-desinformation.json).
+#
+# Les 5 canaux persistent déjà les événements de dérive (MongoDB, Elasticsearch,
+# Kafka drift-alerts) ; ce fichier ajoute le 4e canal manquant : la notification
+# Grafana elle-même.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: pipeline-desinformation-alerts
+    folder: Disinformation Pipeline
+    interval: 1m
+    rules:
+
+      - uid: alert-fake-rate-critical
+        title: "Taux de fake > 70%"
+        condition: C
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Taux de fake > 70% sur les 10 dernières minutes"
+          description: "Le taux moyen d'articles classés fake dépasse le seuil critique (70%) — cf. page Alertes Streamlit, même seuil (fake_rate_crit)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: es-articles
+            model:
+              query: "*"
+              metrics: [{ type: avg, field: is_fake, id: "1" }]
+              bucketAggs: [{ type: date_histogram, field: processed_at, id: "2", settings: { interval: "1m" } }]
+              timeField: processed_at
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: { type: reduce, reducer: mean, expression: A, refId: B }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [0.70] } }]
+              refId: C
+        noDataState: NoData
+        execErrState: Alerting
+
+      - uid: alert-fake-rate-warning
+        title: "Taux de fake > 40%"
+        condition: C
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Taux de fake > 40% sur les 10 dernières minutes"
+          description: "Le taux moyen d'articles classés fake dépasse le seuil d'avertissement (40%) — cf. page Alertes Streamlit (fake_rate_warn)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: es-articles
+            model:
+              query: "*"
+              metrics: [{ type: avg, field: is_fake, id: "1" }]
+              bucketAggs: [{ type: date_histogram, field: processed_at, id: "2", settings: { interval: "1m" } }]
+              timeField: processed_at
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: { type: reduce, reducer: mean, expression: A, refId: B }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [0.40] } }]
+              refId: C
+        noDataState: NoData
+        execErrState: Alerting
+
+      - uid: alert-drift-detected
+        title: "Concept Drift détecté"
+        condition: C
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Score composite de drift au-dessus du seuil d'alerte (0,4)"
+          description: "ADWIN/KSWIN/PageHinkley — score composite pondéré > DRIFT_COMPOSITE_THRESHOLD (spark-app/src/drift_monitor.py)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: es-articles
+            model:
+              query: "*"
+              metrics: [{ type: avg, field: drift_score, id: "1" }]
+              bucketAggs: [{ type: date_histogram, field: processed_at, id: "2", settings: { interval: "30s" } }]
+              timeField: processed_at
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: { type: reduce, reducer: mean, expression: A, refId: B }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [0.4] } }]
+              refId: C
+        noDataState: NoData
+        execErrState: Alerting
+
+      - uid: alert-drift-confirmed
+        title: "Drift confirmé"
+        condition: C
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dérive de concept confirmée (score composite > 0,8)"
+          description: "Un événement drift_confirmed:true a été journalisé dans drift-events (Elasticsearch) / MongoDB — recommended_lr relevé à ONLINE_LR_DRIFT."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 120, to: 0 }
+            datasourceUid: es-drift-events
+            model:
+              query: "drift_confirmed:true"
+              metrics: [{ type: count, id: "1" }]
+              bucketAggs: [{ type: date_histogram, field: timestamp, id: "2", settings: { interval: "30s" } }]
+              timeField: timestamp
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: { type: reduce, reducer: sum, expression: A, refId: B }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [0] } }]
+              refId: C
+        noDataState: NoData
+        execErrState: Alerting
+
+      - uid: alert-confidence-low
+        title: "Confiance moyenne < 70%"
+        condition: C
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Confiance moyenne du modèle sous 70% sur les 15 dernières minutes"
+          description: "Peut signaler une dérive de domaine (registre linguistique éloigné du corpus d'entraînement) ou une zone grise étendue de prédiction sélective — cf. models/calibration.json."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: es-articles
+            model:
+              query: "*"
+              metrics: [{ type: avg, field: confidence, id: "1" }]
+              bucketAggs: [{ type: date_histogram, field: processed_at, id: "2", settings: { interval: "1m" } }]
+              timeField: processed_at
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model: { type: reduce, reducer: mean, expression: A, refId: B }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: lt, params: [0.70] } }]
+              refId: C
+        noDataState: NoData
+        execErrState: Alerting
+
+# Politique de notification minimale : contact point "grafana-default-email" par
+# défaut (aucun SMTP configuré dans ce dépôt — les alertes restent visibles dans
+# Grafana > Alerting > Alert rules et sur les panneaux, sans envoi externe).
+# Pour une notification réelle (email/Slack), ajouter un contact point dans
+# provisioning/alerting/contactpoints.yml et référencer son uid dans une policy.

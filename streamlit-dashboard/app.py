@@ -1,308 +1,1998 @@
-# streamlit-dashboard/app.py — Dashboard interactif multi-pages
-# Pipeline Big Data de Monitoring de la Désinformation en Temps Réel
-# KOMOSSI Sosso — Master 2 IBDIA, UCAO-UUT 2025-2026
-#
-# Reconstruit le 2026-08-27 (le service streamlit-dashboard/ avait été vidé lors
-# du plantage disque du 26/08/2026 — voir README.md, section "Incident & reprise").
-#
-# 5 pages : Vue d'ensemble, Explorer les articles, Monitoring Drift,
-# Analyse des sources, Configuration — + page Recherche web (v2.1).
-#
-# IS_CLOUD=1 : mode démonstration (Streamlit Cloud) — désactive les appels vers
-# les services locaux (Kafka, MongoDB, FastAPI) non disponibles hors du docker-compose,
-# et affiche des données d'exemple à la place.
+"""
+Dashboard Streamlit — Pipeline Big Data de Monitoring de la Désinformation en Temps Réel
+Auteur    : KOMOSSI Sosso — Master BIG DATA IA, Institut ESI — UCAO UUT, 2025-2026
+Encadrants: M. TCHANTCHO Leri & M. BABA Kpatcha
 
-import os
-import time
-from datetime import datetime, timedelta, timezone
+Chiffres alignés sur l'état réel du dépôt (2026-08-29) :
+  - métriques modèle : reports/metrics_summary.json  (F1-macro 93,70 % ; AUC 98,99 %)
+  - corpus : data/processed/preprocessing_report.json (174 687 agrégés -> 77 768 uniques)
+  - seuils de drift : spark-app/src/drift_monitor.py  (alerte 0,4 ; confirmation 0,8)
+  - limites mémoire : docker-compose.yml               (13 services)
+"""
 
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import requests
+import os, time, socket, requests, random as _rnd
+from datetime import datetime, timezone, timedelta
+
 import streamlit as st
-from dotenv import load_dotenv
 
-load_dotenv()
-
-IS_CLOUD = os.getenv('IS_CLOUD', '0') == '1'
-MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017')
-MONGO_DB = os.getenv('MONGO_DB', 'disinformation_db')
-ES_HOST = os.getenv('ES_HOST', 'http://localhost:9200')
-API_BASE = os.getenv('API_BASE', 'http://localhost:8000')
-REFRESH_SEC = int(os.getenv('REFRESH_SEC', '30'))
-
+# set_page_config DOIT être le tout premier appel Streamlit du script
 st.set_page_config(
-    page_title='Monitoring Désinformation — Pipeline Temps Réel',
-    page_icon='🛰️',
-    layout='wide',
+    page_title="Surveillance Désinformation",
+    page_icon=None,
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        "Get Help": None,
+        "Report a bug": None,
+        "About": "Pipeline Big Data Désinformation — KOMOSSI Sosso, Master BIG DATA IA, Institut ESI — UCAO UUT"
+    }
 )
 
-# ── Connexions (silencieuses en mode cloud) ─────────────────────
-@st.cache_resource
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+
+try:
+    from pymongo import MongoClient
+    HAS_MONGO = True
+except ImportError:
+    HAS_MONGO = False
+
+try:
+    from elasticsearch import Elasticsearch
+    HAS_ES = True
+except ImportError:
+    HAS_ES = False
+
+
+# ── Configuration (st.secrets → env vars → défaut) ───────────────────────────
+# Vérifie si un fichier secrets.toml existe pour éviter les avertissements
+# "No secrets found" inutiles dans l'environnement Docker
+_SECRETS_PATHS = [
+    "/root/.streamlit/secrets.toml",
+    "/app/.streamlit/secrets.toml",
+    os.path.join(os.path.expanduser("~"), ".streamlit", "secrets.toml"),
+]
+_HAS_SECRETS_FILE = any(os.path.exists(p) for p in _SECRETS_PATHS)
+
+# Détection de l'environnement Streamlit Cloud (/mount/src est le chemin de montage)
+_IS_CLOUD = os.path.exists("/mount/src")
+
+def _cfg(secret_key, env_key, default):
+    if _HAS_SECRETS_FILE:
+        try:
+            val = st.secrets.get(secret_key)
+            if val is not None:
+                return str(val)
+        except Exception:
+            pass
+    return os.getenv(env_key, default)
+
+_docker_default_mongo = "" if _IS_CLOUD else "mongodb://mongodb:27017"
+_docker_default_es    = "" if _IS_CLOUD else "http://elasticsearch:9200"
+_docker_default_api   = "" if _IS_CLOUD else "http://api:8000"
+
+MONGO_URI   = _cfg("MONGO_URI",   "MONGO_URI",   _docker_default_mongo)
+MONGO_DB    = _cfg("MONGO_DB",    "MONGO_DB",    "disinformation_db")
+ES_HOST     = _cfg("ES_HOST",     "ES_HOST",     _docker_default_es)
+API_BASE    = _cfg("API_BASE",    "API_BASE",    _docker_default_api)
+REFRESH_SEC = int(_cfg("REFRESH_SEC", "REFRESH_SEC", "30"))
+
+CLR_FAKE    = "#E74C3C"
+CLR_REAL    = "#2ECC71"
+CLR_DRIFT   = "#F39C12"
+CLR_PRIMARY = "#2C3E50"
+CLR_INFO    = "#3498DB"
+CLR_PURPLE  = "#8E44AD"
+
+DEFAULT_THRESHOLDS = {
+    "fake_rate_warn":    40.0,
+    "fake_rate_crit":    70.0,
+    "drift_warn":        0.4,   # DRIFT_COMPOSITE_THRESHOLD — seuil d'alerte réel
+    "drift_crit":        0.8,   # DRIFT_CONFIRMED_THRESHOLD — seuil de confirmation réel
+    "conf_low":          0.70,
+    "silence_minutes":   15,
+}
+
+# ── Données de démonstration (Mode Cloud uniquement) ─────────────────────────
+_rnd.seed(42)
+_D = datetime.now(timezone.utc)
+
+_DEMO_STATS = {
+    "total_articles": 1847, "fake_articles": 612, "real_articles": 1235,
+    "fake_rate": 33.1, "drift_events": 3, "articles_last_hour": 47
+}
+
+_DEMO_ARTICLES_RAW = [
+    {"id":"d01","title":"AFP : Le sommet de l'Union Africaine s'ouvre à Addis-Abeba","body":"Addis-Abeba (AFP) — Les chefs d'État africains se réunissent pour le 37e sommet de l'UA.","url":"https://www.afp.com","source":"AFP","language":"fr","is_fake":0,"confidence":0.94,"p_fake":0.06,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(minutes=5)).isoformat()},
+    {"id":"d02","title":"Reuters: African Union summit opens in Addis Ababa","body":"ADDIS ABABA (Reuters) - Leaders gather for the 37th African Union summit on security.","url":"https://www.reuters.com","source":"Reuters","language":"en","is_fake":0,"confidence":0.91,"p_fake":0.09,"drift_score":0.03,"drift_active":False,"processed_at":(_D-timedelta(minutes=12)).isoformat()},
+    {"id":"d03","title":"RFI : L'épidémie de mpox recule dans l'est de la RDC selon l'OMS","body":"Kinshasa - L'OMS indique une baisse de 18 % des nouveaux cas de mpox cette semaine.","url":"https://www.rfi.fr","source":"RFI","language":"fr","is_fake":0,"confidence":0.89,"p_fake":0.11,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(minutes=20)).isoformat()},
+    {"id":"d04","title":"BBC : Mali military government extends political transition period","body":"BAMAKO (BBC) - Mali's transitional government announced a 24-month extension.","url":"https://www.bbc.com","source":"BBC","language":"en","is_fake":0,"confidence":0.87,"p_fake":0.13,"drift_score":0.04,"drift_active":False,"processed_at":(_D-timedelta(minutes=35)).isoformat()},
+    {"id":"d05","title":"AFP : Les négociations de paix au Soudan reprennent à Djibouti","body":"Djibouti (AFP) — Des représentants des deux camps en guerre reprennent les pourparlers.","url":"https://www.afp.com","source":"AFP","language":"fr","is_fake":0,"confidence":0.92,"p_fake":0.08,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(minutes=48)).isoformat()},
+    {"id":"d06","title":"Reuters: IMF approves $600 million loan to support Ivory Coast economy","body":"WASHINGTON (Reuters) - The IMF executive board approved the loan to Côte d'Ivoire.","url":"https://www.reuters.com","source":"Reuters","language":"en","is_fake":0,"confidence":0.96,"p_fake":0.04,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(hours=1,minutes=10)).isoformat()},
+    {"id":"d07","title":"RFI : Sénégal — le gouvernement présente un plan d'urgence économique","body":"Dakar (RFI) — Le président Bassirou Diomaye Faye détaille le plan de 500 milliards FCFA.","url":"https://www.rfi.fr","source":"RFI","language":"fr","is_fake":0,"confidence":0.90,"p_fake":0.10,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(hours=1,minutes=30)).isoformat()},
+    {"id":"d08","title":"AFP : Attaque repoussée par les forces de sécurité au Burkina Faso","body":"Ouagadougou (AFP) — Les forces armées ont neutralisé un groupe armé à la frontière malienne.","url":"https://www.afp.com","source":"AFP","language":"fr","is_fake":0,"confidence":0.88,"p_fake":0.12,"drift_score":0.05,"drift_active":False,"processed_at":(_D-timedelta(hours=2)).isoformat()},
+    {"id":"d09","title":"BBC : Kenya raises minimum wage by 10 percent amid cost-of-living crisis","body":"NAIROBI (BBC) - The government announced the wage increase to help low-income workers.","url":"https://www.bbc.com","source":"BBC","language":"en","is_fake":0,"confidence":0.93,"p_fake":0.07,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(hours=2,minutes=30)).isoformat()},
+    {"id":"d10","title":"EXCLUSIF: Des médecins révèlent que le vaccin mpox contient des micropuces de traçage 5G","body":"Des chercheurs indépendants affirment avoir découvert des nanotechnologies dans les vaccins distribués en Afrique.","url":"https://fake-blog.example","source":"Blog inconnu","language":"fr","is_fake":1,"confidence":0.97,"p_fake":0.97,"drift_score":0.62,"drift_active":True,"processed_at":(_D-timedelta(hours=3)).isoformat()},
+    {"id":"d11","title":"CHOC: Le Niger aurait signé un accord secret pour vendre son uranium à la Russie","body":"Une source anonyme non vérifiée révèle qu'un accord secret entre Niamey et Moscou a été signé.","url":"https://fake-blog.example","source":"Réseau social","language":"fr","is_fake":1,"confidence":0.95,"p_fake":0.95,"drift_score":0.58,"drift_active":True,"processed_at":(_D-timedelta(hours=3,minutes=30)).isoformat()},
+    {"id":"d12","title":"Reuters: Ethiopia's parliament approves landmark electoral reform law","body":"ADDIS ABABA (Reuters) - The new law will allow independent candidates for the first time.","url":"https://www.reuters.com","source":"Reuters","language":"en","is_fake":0,"confidence":0.91,"p_fake":0.09,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(hours=4)).isoformat()},
+    {"id":"d13","title":"ALERTE: Un chercheur prouve que le COVID-19 a été fabriqué avec des fonds africains","body":"Selon un document non vérifié circulant sur les réseaux sociaux, des laboratoires africains seraient impliqués.","url":"https://fake-blog.example","source":"Inconnu","language":"fr","is_fake":1,"confidence":0.93,"p_fake":0.93,"drift_score":0.71,"drift_active":True,"processed_at":(_D-timedelta(hours=4,minutes=20)).isoformat()},
+    {"id":"d14","title":"RFI : Le Tchad et la France signent un accord de défense renforcé","body":"N'Djamena (RFI) — Un nouvel accord bilatéral de défense a été signé entre Ndjamena et Paris.","url":"https://www.rfi.fr","source":"RFI","language":"fr","is_fake":0,"confidence":0.86,"p_fake":0.14,"drift_score":0.03,"drift_active":False,"processed_at":(_D-timedelta(hours=5)).isoformat()},
+    {"id":"d15","title":"BREAKING: Scientists discover miracle cure that eliminates AIDS in 48 hours","body":"Revolutionary treatment developed in undisclosed laboratory said to cure HIV/AIDS completely.","url":"https://fake-blog.example","source":"Unknown Blog","language":"en","is_fake":1,"confidence":0.98,"p_fake":0.98,"drift_score":0.88,"drift_active":True,"processed_at":(_D-timedelta(hours=5,minutes=30)).isoformat()},
+    {"id":"d16","title":"AFP : La CEDEAO lève partiellement les sanctions économiques contre le Niger","body":"Abuja (AFP) — La Communauté économique des États décide d'alléger les sanctions commerciales.","url":"https://www.afp.com","source":"AFP","language":"fr","is_fake":0,"confidence":0.89,"p_fake":0.11,"drift_score":0.02,"drift_active":False,"processed_at":(_D-timedelta(hours=6)).isoformat()},
+    {"id":"d17","title":"BBC : Rwanda records 7.2% GDP growth despite regional instability","body":"KIGALI (BBC) - Rwanda's economy outperformed regional neighbors with strong growth figures.","url":"https://www.bbc.com","source":"BBC","language":"en","is_fake":0,"confidence":0.92,"p_fake":0.08,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(hours=6,minutes=45)).isoformat()},
+    {"id":"d18","title":"URGENT: Le gouvernement togolais dissout tous les partis d'opposition","body":"Information non vérifiée circulant sur WhatsApp — aucune confirmation officielle.","url":"https://fake-blog.example","source":"WhatsApp","language":"fr","is_fake":1,"confidence":0.96,"p_fake":0.96,"drift_score":0.65,"drift_active":True,"processed_at":(_D-timedelta(hours=7)).isoformat()},
+    {"id":"d19","title":"Reuters: Nigeria's central bank raises rates to 26.25% to fight inflation","body":"ABUJA (Reuters) - The central bank raised its benchmark interest rate for the fourth time.","url":"https://www.reuters.com","source":"Reuters","language":"en","is_fake":0,"confidence":0.94,"p_fake":0.06,"drift_score":0.01,"drift_active":False,"processed_at":(_D-timedelta(hours=7,minutes=30)).isoformat()},
+    {"id":"d20","title":"RFI : Somalie — l'armée nationale reprend le contrôle de deux villes stratégiques","body":"Mogadiscio (RFI) — L'armée somalienne a chassé les militants d'Al-Shabaab de Baidoa et Kismayo.","url":"https://www.rfi.fr","source":"RFI","language":"fr","is_fake":0,"confidence":0.88,"p_fake":0.12,"drift_score":0.04,"drift_active":False,"processed_at":(_D-timedelta(hours=8)).isoformat()},
+]
+
+# Format de _id identique à l'agrégation réelle : $substr(processed_at, 0, 13) -> "YYYY-MM-DDTHH"
+_DEMO_TREND = [
+    {"_id": (_D-timedelta(hours=h)).strftime("%Y-%m-%dT%H"),
+     "total": _rnd.randint(35, 85),
+     "fakes": _rnd.randint(8, 28),
+     "avg_confidence": round(_rnd.uniform(0.80, 0.95), 3)}
+    for h in range(23, -1, -1)
+]
+
+# Schéma identique à spark-app/src/drift_monitor.py::get_alert_payload()
+_DEMO_DRIFT = [
+    {"timestamp": (_D-timedelta(hours=2,minutes=15)).isoformat(), "composite_score": 0.82,
+     "drift_confirmed": True, "signals": {"ADWIN": True, "KSWIN": True, "PageHinkley": False},
+     "recommended_lr": 5e-5, "messages_total": 8470, "confidence_mean_last100": 0.71},
+    {"timestamp": (_D-timedelta(hours=8,minutes=30)).isoformat(), "composite_score": 0.45,
+     "drift_confirmed": False, "signals": {"ADWIN": True, "KSWIN": False, "PageHinkley": False},
+     "recommended_lr": 5e-5, "messages_total": 6230, "confidence_mean_last100": 0.83},
+    {"timestamp": (_D-timedelta(hours=18)).isoformat(), "composite_score": 0.41,
+     "drift_confirmed": False, "signals": {"ADWIN": False, "KSWIN": True, "PageHinkley": False},
+     "recommended_lr": 5e-5, "messages_total": 4120, "confidence_mean_last100": 0.86},
+]
+
+def _demo_articles_filtered(limit=100, fake_only=False, real_only=False,
+                             source_filter=None, conf_min=0.0, drift_only=False):
+    df = pd.DataFrame(_DEMO_ARTICLES_RAW)
+    if fake_only:      df = df[df["is_fake"] == 1]
+    if real_only:      df = df[df["is_fake"] == 0]
+    if source_filter:  df = df[df["source"] == source_filter]
+    if conf_min > 0:   df = df[df["confidence"] >= conf_min]
+    if drift_only:     df = df[df["drift_active"] == True]
+    return df.head(limit).reset_index(drop=True)
+
+st.markdown("""
+<style>
+[data-testid="stAppViewContainer"] { background: #F8F9FA; }
+.kpi-card {
+    background: white; border-radius: 12px; padding: 18px 22px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 5px solid #2C3E50;
+    margin-bottom: 12px;
+}
+.kpi-card.fake  { border-left-color: #E74C3C; }
+.kpi-card.real  { border-left-color: #2ECC71; }
+.kpi-card.drift { border-left-color: #F39C12; }
+.kpi-card.info  { border-left-color: #3498DB; }
+.kpi-card.warn  { border-left-color: #F39C12; }
+.kpi-value { font-size: 2.2rem; font-weight: 700; color: #2C3E50; margin: 0; }
+.kpi-label { font-size: 0.82rem; color: #7F8C8D; font-weight: 500; margin: 0; letter-spacing: 0.5px; }
+.badge-fake { background:#E74C3C; color:white; border-radius:4px; padding:2px 8px; font-size:0.75rem; }
+.badge-real { background:#2ECC71; color:white; border-radius:4px; padding:2px 8px; font-size:0.75rem; }
+.badge-warn { background:#F39C12; color:white; border-radius:4px; padding:2px 8px; font-size:0.75rem; }
+.badge-crit { background:#E74C3C; color:white; border-radius:4px; padding:2px 8px; font-size:0.75rem; }
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1a252f 0%, #2C3E50 100%);
+}
+[data-testid="stSidebar"] * { color: #ECF0F1 !important; }
+[data-testid="stSidebar"] .stRadio label {
+    padding: 8px 12px; border-radius: 8px; margin: 2px 0;
+    display: block; transition: background 0.2s;
+}
+[data-testid="stSidebar"] .stRadio label:hover { background: rgba(255,255,255,0.1); }
+.section-header {
+    background: linear-gradient(135deg, #2C3E50, #3498DB);
+    color: white; padding: 14px 22px; border-radius: 10px;
+    margin-bottom: 20px; font-size: 1.25rem; font-weight: 600;
+}
+.alert-critical {
+    background: #FDEDEC; border-left: 5px solid #E74C3C;
+    border-radius: 8px; padding: 14px 18px; margin: 8px 0;
+}
+.alert-warning {
+    background: #FEF9E7; border-left: 5px solid #F39C12;
+    border-radius: 8px; padding: 14px 18px; margin: 8px 0;
+}
+.alert-ok {
+    background: #EAFAF1; border-left: 5px solid #2ECC71;
+    border-radius: 8px; padding: 14px 18px; margin: 8px 0;
+}
+.drift-alert {
+    background: #FEF9E7; border: 1px solid #F39C12;
+    border-radius: 8px; padding: 12px 16px; margin: 8px 0;
+}
+.status-dot {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; margin-right: 6px;
+}
+.status-up   { background: #2ECC71; }
+.status-down { background: #E74C3C; }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── Connexions (cached) ───────────────────────────────────────────────────────
+@st.cache_resource(show_spinner=False, ttl=60)
 def get_mongo():
-    if IS_CLOUD:
+    if not HAS_MONGO or not MONGO_URI:
         return None
     try:
-        from pymongo import MongoClient
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=1500)
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         client.admin.command('ping')
         return client[MONGO_DB]
     except Exception:
         return None
 
-
-def api_get(path, params=None, timeout=5):
-    if IS_CLOUD:
+@st.cache_resource(show_spinner=False, ttl=60)
+def get_es():
+    if not HAS_ES or not ES_HOST:
         return None
     try:
-        r = requests.get(f'{API_BASE}{path}', params=params, timeout=timeout)
-        if r.status_code == 200:
-            return r.json()
+        es = Elasticsearch(ES_HOST, request_timeout=10)
+        if es.ping():
+            return es
+        return None
+    except Exception:
+        return None
+
+
+def _backend_ok():
+    db = get_mongo()
+    return db is not None
+
+
+# ── Fonctions de données ──────────────────────────────────────────────────────
+@st.cache_data(ttl=20, show_spinner=False)
+def fetch_stats():
+    if not API_BASE:
+        return _DEMO_STATS if _IS_CLOUD else {}
+    try:
+        r = requests.get(f"{API_BASE}/api/v1/stats", timeout=8)
+        return r.json() if r.ok else {}
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=20, show_spinner=False)
+def fetch_health():
+    if not API_BASE:
+        return {"status": "demo", "mongo": "up", "elasticsearch": "up",
+                "timestamp": datetime.now(timezone.utc).isoformat()} if _IS_CLOUD else {}
+    try:
+        r = requests.get(f"{API_BASE}/health", timeout=8)
+        return r.json() if r.ok else {}
+    except Exception:
+        return {}
+
+def fetch_articles(limit=100, fake_only=False, real_only=False, source_filter=None,
+                   conf_min=0.0, drift_only=False):
+    if _IS_CLOUD:
+        return _demo_articles_filtered(limit, fake_only, real_only, source_filter, conf_min, drift_only)
+    db = get_mongo()
+    if db is None:
+        return pd.DataFrame()
+    try:
+        query = {}
+        if fake_only:         query["is_fake"] = 1
+        if real_only:         query["is_fake"] = 0
+        if source_filter:     query["source"] = source_filter
+        if drift_only:        query["drift_active"] = True
+        if conf_min > 0:      query["confidence"] = {"$gte": conf_min}
+        cursor = db.articles.find(
+            query,
+            {"_id": 0, "id": 1, "title": 1, "body": 1, "url": 1, "source": 1,
+             "language": 1, "is_fake": 1, "verdict": 1, "confidence": 1, "p_fake": 1,
+             "drift_score": 1, "drift_active": 1, "processed_at": 1}
+        ).sort("processed_at", -1).limit(limit)
+        return pd.DataFrame(list(cursor))
+    except Exception:
+        return pd.DataFrame()
+
+def fetch_virality(hours=24):
+    if not API_BASE:
+        return _DEMO_TREND if _IS_CLOUD else []
+    try:
+        r = requests.get(f"{API_BASE}/api/v1/articles/virality?hours={hours}", timeout=10)
+        return r.json().get("trend", []) if r.ok else []
+    except Exception:
+        return []
+
+def fetch_drift_events(limit=50):
+    if _IS_CLOUD:
+        return _DEMO_DRIFT[:limit]
+    db = get_mongo()
+    if db is None:
+        return []
+    try:
+        cursor = db.drift_events.find({}, {"_id": 0}).sort("timestamp", -1).limit(limit)
+        return list(cursor)
+    except Exception:
+        return []
+
+def search_articles(query_text, size=20, fake_filter=None):
+    if _IS_CLOUD:
+        return _demo_articles_filtered(size, fake_only=(fake_filter==1), real_only=(fake_filter==0))
+    es = get_es()
+    if es is None:
+        return pd.DataFrame()
+    try:
+        must = [{"multi_match": {
+            "query": query_text,
+            "fields": ["title^3", "body"],
+            "fuzziness": "AUTO"
+        }}]
+        if fake_filter is not None:
+            must.append({"term": {"is_fake": fake_filter}})
+        body = {
+            "query": {"bool": {"must": must}},
+            "size": size,
+            "_source": ["id", "title", "source", "language", "is_fake",
+                        "confidence", "p_fake", "processed_at", "url", "body"]
+        }
+        resp = es.search(index="articles", body=body)
+        hits = [h["_source"] for h in resp["hits"]["hits"]]
+        return pd.DataFrame(hits)
+    except Exception:
+        return pd.DataFrame()
+
+def fetch_alert_history(limit=100):
+    db = get_mongo()
+    if db is None:
+        return []
+    try:
+        cursor = db.alert_history.find({}, {"_id": 0}).sort("timestamp", -1).limit(limit)
+        return list(cursor)
+    except Exception:
+        return []
+
+def save_alert_event(alert_doc):
+    db = get_mongo()
+    if db is None:
+        return
+    try:
+        db.alert_history.insert_one(alert_doc)
     except Exception:
         pass
-    return None
+
+def check_services():
+    # Sur Streamlit Cloud aucun service Docker n'est disponible : retour immédiat
+    if _IS_CLOUD:
+        return {name: False for name in [
+            "Zookeeper", "Kafka", "MongoDB", "Elasticsearch",
+            "FastAPI", "Kafdrop", "Grafana", "Streamlit"
+        ]}
+    # Depuis l'intérieur du conteneur Docker, on utilise les noms de service internes
+    targets = {
+        "Zookeeper":     ("zookeeper",     2181),
+        "Kafka":         ("kafka",         29092),
+        "MongoDB":       ("mongodb",       27017),
+        "Elasticsearch": ("elasticsearch", 9200),
+        "FastAPI":       ("api",           8000),
+        "Kafdrop":       ("kafdrop",       9000),
+        "Grafana":       ("grafana",       3000),
+        "Streamlit":     ("localhost",     8501),
+    }
+    results = {}
+    for name, (host, port) in targets.items():
+        try:
+            s = socket.create_connection((host, port), timeout=1)
+            s.close()
+            results[name] = True
+        except Exception:
+            results[name] = False
+    return results
+
+def get_word_frequencies(df, n=30):
+    if df.empty or "title" not in df.columns:
+        return pd.DataFrame()
+    stop = {"le","la","les","de","du","des","un","une","et","en","à","au","aux",
+            "est","que","qui","pour","par","sur","dans","avec","ce","se","il","ils",
+            "elle","elles","on","nous","vous","the","a","an","of","in","to","and",
+            "is","it","for","that","was","are","with","as","at","by","this","from"}
+    words = {}
+    for title in df["title"].dropna():
+        for w in str(title).lower().split():
+            w = w.strip(".,;:!?\"'()[]{}").replace("'","").replace("'","")
+            if len(w) > 3 and w not in stop:
+                words[w] = words.get(w, 0) + 1
+    return pd.DataFrame(
+        sorted(words.items(), key=lambda x: x[1], reverse=True)[:n],
+        columns=["mot", "fréquence"]
+    )
 
 
-# ── Données de démonstration (mode cloud / services indisponibles) ─
-def demo_stats():
-    return {
-        'total_articles': 12_483, 'fake_articles': 5_216, 'real_articles': 7_267,
-        'fake_rate': 41.8, 'drift_events': 7, 'articles_last_hour': 214,
+# ── Évaluation des alertes ────────────────────────────────────────────────────
+def evaluate_alerts(stats, thresholds):
+    alerts = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    fake_pct = stats.get("fake_rate", 0.0)
+    if fake_pct >= thresholds["fake_rate_crit"]:
+        alerts.append({
+            "severity": "critical",
+            "title": "Taux de désinformation critique",
+            "message": f"Taux actuel : {fake_pct:.1f}% (seuil : {thresholds['fake_rate_crit']}%)",
+            "metric": "fake_rate", "value": fake_pct, "timestamp": now
+        })
+    elif fake_pct >= thresholds["fake_rate_warn"]:
+        alerts.append({
+            "severity": "warning",
+            "title": "Taux de désinformation élevé",
+            "message": f"Taux actuel : {fake_pct:.1f}% (seuil : {thresholds['fake_rate_warn']}%)",
+            "metric": "fake_rate", "value": fake_pct, "timestamp": now
+        })
+
+    drift_events = fetch_drift_events(limit=5)
+    if drift_events:
+        latest_score = drift_events[0].get("composite_score", 0)
+        if latest_score >= thresholds["drift_crit"]:
+            alerts.append({
+                "severity": "critical",
+                "title": "Concept Drift confirmé",
+                "message": f"Score : {latest_score:.3f} (seuil critique : {thresholds['drift_crit']})",
+                "metric": "drift_score", "value": latest_score, "timestamp": now
+            })
+        elif latest_score >= thresholds["drift_warn"]:
+            alerts.append({
+                "severity": "warning",
+                "title": "Concept Drift détecté",
+                "message": f"Score : {latest_score:.3f} (seuil avertissement : {thresholds['drift_warn']})",
+                "metric": "drift_score", "value": latest_score, "timestamp": now
+            })
+
+    return alerts
+
+
+# ── Composants UI ─────────────────────────────────────────────────────────────
+def kpi_card(label, value, css_class="", unit=""):
+    st.markdown(f"""
+    <div class="kpi-card {css_class}">
+        <p class="kpi-label">{label}</p>
+        <p class="kpi-value">{value}<span style="font-size:1rem;color:#95A5A6"> {unit}</span></p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def section_header(title):
+    st.markdown(f'<div class="section-header">{title}</div>', unsafe_allow_html=True)
+
+def no_data_msg(msg="Données non disponibles — démarrez le pipeline Docker."):
+    st.info(msg)
+
+def status_label(is_fake, verdict=None):
+    """FAKE / RÉEL / INCERTAIN — la zone grise de la prédiction sélective
+    (calibration.json, ProbabilityCalibrator) n'est affichée que lorsque le champ
+    verdict est présent (articles classifiés après l'ajout de la calibration ;
+    absent des documents plus anciens, qui retombent sur FAKE/RÉEL)."""
+    if verdict == "uncertain":
+        return "INCERTAIN"
+    return "FAKE" if is_fake else "RÉEL"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+    <div style="text-align:center; padding: 18px 0 8px 0;">
+        <div style="font-size:1.05rem; font-weight:700; letter-spacing:1px;">PIPELINE DÉSINFORMATION</div>
+        <div style="font-size:0.72rem; opacity:0.7; margin-top:4px;">Master BIG DATA IA — Institut ESI, UCAO UUT</div>
+    </div>
+    <hr style="border-color:rgba(255,255,255,0.2); margin:8px 0 16px 0;">
+    """, unsafe_allow_html=True)
+
+    page = st.radio(
+        "Navigation",
+        [
+            "Tableau de bord",
+            "Articles temps réel",
+            "Recherche & Analyse",
+            "Drift & Apprentissage",
+            "Alertes",
+            "Infrastructure",
+            "À propos",
+        ],
+        label_visibility="collapsed"
+    )
+
+    st.markdown("<hr style='border-color:rgba(255,255,255,0.2); margin:16px 0 10px 0;'>", unsafe_allow_html=True)
+
+    auto_refresh = st.toggle("Rafraîchissement auto", value=False)
+    if auto_refresh:
+        refresh_interval = st.slider("Intervalle (s)", 10, 120, REFRESH_SEC)
+
+    # Seuils d'alerte configurables
+    st.markdown("<hr style='border-color:rgba(255,255,255,0.2); margin:10px 0 8px 0;'>", unsafe_allow_html=True)
+    with st.expander("Seuils d'alerte", expanded=False):
+        t_fake_warn = st.slider("Fake avertissement (%)", 10, 80, int(DEFAULT_THRESHOLDS["fake_rate_warn"]), 5)
+        t_fake_crit = st.slider("Fake critique (%)", 20, 95, int(DEFAULT_THRESHOLDS["fake_rate_crit"]), 5)
+        t_drift_crit = st.slider("Drift critique", 0.1, 0.9, DEFAULT_THRESHOLDS["drift_crit"], 0.05)
+
+    thresholds = {
+        "fake_rate_warn": float(t_fake_warn),
+        "fake_rate_crit": float(t_fake_crit),
+        "drift_warn":     DEFAULT_THRESHOLDS["drift_warn"],
+        "drift_crit":     float(t_drift_crit),
+        "conf_low":       DEFAULT_THRESHOLDS["conf_low"],
+        "silence_minutes": DEFAULT_THRESHOLDS["silence_minutes"],
     }
 
+    # Status rapide
+    st.markdown("<hr style='border-color:rgba(255,255,255,0.2); margin:8px 0 8px 0;'>", unsafe_allow_html=True)
+    health = fetch_health()
+    mongo_ok = health.get("mongo") == "up"
+    es_ok    = health.get("elasticsearch") == "up"
+    api_ok   = bool(health)
+    st.markdown(f"""
+    <div style='font-size:0.78rem;'>
+        <span class='status-dot {"status-up" if mongo_ok else "status-down"}'></span>MongoDB<br>
+        <span class='status-dot {"status-up" if es_ok else "status-down"}'></span>Elasticsearch<br>
+        <span class='status-dot {"status-up" if api_ok else "status-down"}'></span>FastAPI
+    </div>
+    """, unsafe_allow_html=True)
 
-def demo_articles(n=200):
-    import random
-    random.seed(42)
-    sources = ['AFP Afrique', 'RFI', 'Jeune Afrique', 'Al Jazeera', 'France24', 'Reuters', 'BBC', 'blog-inconnu.info']
-    langs = ['fr', 'en', 'sw', 'ha', 'am']
-    rows = []
-    now = datetime.now(timezone.utc)
-    for i in range(n):
-        is_fake = random.random() < 0.42
-        rows.append({
-            'title': f"Article démonstration #{i+1} — {'alerte virale non confirmée' if is_fake else 'communiqué officiel'}",
-            'source': random.choice(sources),
-            'language': random.choice(langs),
-            'is_fake': int(is_fake),
-            'confidence': round(random.uniform(0.6, 0.99), 3),
-            'processed_at': (now - timedelta(minutes=random.randint(0, 720))).isoformat(),
-        })
-    return pd.DataFrame(rows)
+    st.markdown(f"<div style='font-size:0.68rem;opacity:0.5;margin-top:12px;'>v2.0 · {datetime.now().strftime('%H:%M:%S')}</div>",
+                unsafe_allow_html=True)
+
+    if _IS_CLOUD:
+        st.markdown("""
+        <div style='background:rgba(52,152,219,0.25);border-radius:6px;padding:8px 10px;
+                    margin-top:10px;font-size:0.75rem;'>
+<b>Mode Démo</b><br>Données de démonstration<br>
+            <span style='opacity:0.8;'>Pipeline complet disponible en local</span>
+        </div>
+        """, unsafe_allow_html=True)
+    elif not _backend_ok():
+        st.markdown("""
+        <div style='background:rgba(231,76,60,0.2);border-radius:6px;padding:8px 10px;
+                    margin-top:10px;font-size:0.75rem;'>
+Mode limité<br>Backends indisponibles
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Évaluation alertes actives pour badge sidebar
+    stats_quick = fetch_stats()
+    active_alerts = evaluate_alerts(stats_quick, thresholds)
+    if active_alerts:
+        crits = sum(1 for a in active_alerts if a["severity"] == "critical")
+        warns = sum(1 for a in active_alerts if a["severity"] == "warning")
+        badge = f"{crits} crit." if crits else f"{warns} avert."
+        st.markdown(f"<div style='font-size:0.8rem;margin-top:6px;'>{badge}</div>", unsafe_allow_html=True)
 
 
-db = get_mongo()
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 1 — TABLEAU DE BORD
+# ═════════════════════════════════════════════════════════════════════════════
+if "Tableau de bord" in page:
+    section_header("Tableau de Bord — Surveillance en Temps Réel")
 
-st.sidebar.title('🛰️ Pipeline Désinformation')
-st.sidebar.caption('KOMOSSI Sosso — Master 2 IBDIA, UCAO-UUT 2025-2026')
-if IS_CLOUD:
-    st.sidebar.warning("Mode démonstration (Streamlit Cloud) : données d'exemple — "
-                        "les services Kafka/MongoDB/FastAPI ne sont pas accessibles hors du docker-compose local.")
-elif db is None:
-    st.sidebar.warning('Services locaux injoignables (MongoDB) — données de démonstration affichées. '
-                        'Lancer `docker compose up -d` pour les données réelles.')
-else:
-    st.sidebar.success('Connecté à MongoDB / API ✅')
+    # Alertes actives en bannière
+    if active_alerts:
+        for a in active_alerts:
+            cls = "alert-critical" if a["severity"] == "critical" else "alert-warning"
+            icon = "CRITIQUE" if a["severity"] == "critical" else "AVERTISSEMENT"
+            st.markdown(f'<div class="{cls}"><strong>{icon} — {a["title"]}</strong> — {a["message"]}</div>',
+                        unsafe_allow_html=True)
+        st.markdown("")
 
-page = st.sidebar.radio('Navigation', [
-    "🏠 Vue d'ensemble",
-    '🔍 Explorer les articles',
-    '⚡ Monitoring Drift',
-    '📊 Analyse des sources',
-    '🌍 Recherche web',
-    '⚙️ Configuration',
-])
+    stats = stats_quick
+    total    = stats.get("total_articles", 0)
+    fakes    = stats.get("fake_articles",  0)
+    reals    = stats.get("real_articles",  0)
+    fake_pct = stats.get("fake_rate",      0.0)
+    drifts   = stats.get("drift_events",   0)
+    last_h   = stats.get("articles_last_hour", 0)
 
-# ═══════════════════════════════════════════════════════════════
-# PAGE 1 — VUE D'ENSEMBLE
-# ═══════════════════════════════════════════════════════════════
-if page == "🏠 Vue d'ensemble":
-    st.title("🏠 Vue d'ensemble — Temps réel")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1: kpi_card("Articles analysés",   f"{total:,}",     "info")
+    with c2: kpi_card("Faux détectés",        f"{fakes:,}",     "fake")
+    with c3: kpi_card("Vrais détectés",       f"{reals:,}",     "real")
+    with c4: kpi_card("Taux de fake",         f"{fake_pct:.1f}", "fake" if fake_pct > 50 else "info", "%")
+    with c5: kpi_card("Alertes drift",        f"{drifts}",      "drift")
+    with c6: kpi_card("Articles (1h)",        f"{last_h}",      "info")
 
-    stats = api_get('/api/v1/stats') or demo_stats()
+    st.markdown("---")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric('Articles analysés', f"{stats['total_articles']:,}".replace(',', ' '))
-    c2.metric('Taux de fake', f"{stats['fake_rate']} %")
-    c3.metric('Événements de drift', stats['drift_events'])
-    c4.metric('Articles / dernière heure', stats['articles_last_hour'])
+    col_l, col_r = st.columns([1, 1])
 
-    df = demo_articles(300) if (IS_CLOUD or db is None) else pd.DataFrame(
-        list(db.articles.find({}, {'_id': 0}).sort('processed_at', -1).limit(500)))
-
-    if not df.empty and 'processed_at' in df.columns:
-        df['processed_at'] = pd.to_datetime(df['processed_at'], errors='coerce', utc=True)
-        df['heure'] = df['processed_at'].dt.floor('h')
-        ts = df.groupby(['heure', 'is_fake']).size().reset_index(name='n')
-        ts['label'] = ts['is_fake'].map({0: 'Réel', 1: 'Fake'})
-        fig = px.bar(ts, x='heure', y='n', color='label', barmode='stack',
-                     title='Volume d\'articles par heure (réel vs fake)',
-                     color_discrete_map={'Réel': '#2E7D32', 'Fake': '#C62828'})
-        st.plotly_chart(fig, use_container_width=True)
-
-        pie = df['is_fake'].map({0: 'Réel', 1: 'Fake'}).value_counts().reset_index()
-        pie.columns = ['label', 'n']
-        fig2 = px.pie(pie, names='label', values='n', title='Répartition Fake / Réel',
-                      color='label', color_discrete_map={'Réel': '#2E7D32', 'Fake': '#C62828'})
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("Aucun article en base pour le moment — le producer/spark-app n'a peut-être pas encore démarré.")
-
-    st.caption(f"Rafraîchissement automatique toutes les {REFRESH_SEC}s.")
-
-# ═══════════════════════════════════════════════════════════════
-# PAGE 2 — EXPLORER LES ARTICLES
-# ═══════════════════════════════════════════════════════════════
-elif page == '🔍 Explorer les articles':
-    st.title('🔍 Explorer les articles classifiés')
-
-    col1, col2, col3 = st.columns(3)
-    query = col1.text_input('Recherche full-text (Elasticsearch)', '')
-    label_filter = col2.selectbox('Label', ['Tous', 'Fake', 'Réel'])
-    lang_filter = col3.text_input('Langue (code, ex: fr, en, sw)', '')
-
-    df = demo_articles(300) if (IS_CLOUD or db is None) else pd.DataFrame(
-        list(db.articles.find({}, {'_id': 0}).sort('processed_at', -1).limit(1000)))
-
-    if not df.empty:
-        if query:
-            df = df[df['title'].str.contains(query, case=False, na=False)]
-        if label_filter != 'Tous':
-            df = df[df['is_fake'] == (1 if label_filter == 'Fake' else 0)]
-        if lang_filter:
-            df = df[df.get('language', '').astype(str).str.lower() == lang_filter.lower()]
-
-        st.write(f"**{len(df)}** article(s) trouvé(s)")
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        st.download_button('📥 Exporter en CSV', df.to_csv(index=False).encode('utf-8'),
-                            'articles_export.csv', 'text/csv')
-    else:
-        st.info('Aucun article disponible.')
-
-# ═══════════════════════════════════════════════════════════════
-# PAGE 3 — MONITORING DRIFT
-# ═══════════════════════════════════════════════════════════════
-elif page == '⚡ Monitoring Drift':
-    st.title('⚡ Monitoring du Concept Drift')
-    st.caption('Tri-détecteur ADWIN + KSWIN + PageHinkley (module `spark-app/src/drift_monitor.py`)')
-
-    drift_data = api_get('/api/v1/drift/status')
-    if drift_data is None:
-        import random
-        random.seed(7)
-        n = 60
-        now = datetime.now(timezone.utc)
-        drift_data = {
-            'history': [{
-                'timestamp': (now - timedelta(minutes=5 * (n - i))).isoformat(),
-                'composite_score': max(0, min(1, 0.2 + 0.4 * abs(((i % 20) - 10) / 10) + random.uniform(-0.05, 0.05))),
-                'adwin': random.random() < 0.05,
-                'kswin': random.random() < 0.05,
-                'page_hinkley': random.random() < 0.03,
-            } for i in range(n)],
-            'current_lr': 1.4e-5,
-        }
-
-    hist = pd.DataFrame(drift_data['history'])
-    hist['timestamp'] = pd.to_datetime(hist['timestamp'], errors='coerce')
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=hist['timestamp'], y=hist['composite_score'],
-                              mode='lines', name='Score composite', line=dict(color='#1565C0')))
-    fig.add_hline(y=0.5, line_dash='dash', line_color='orange', annotation_text='Seuil d\'alerte')
-    fig.update_layout(title='Score composite de drift dans le temps', yaxis_range=[0, 1])
-    st.plotly_chart(fig, use_container_width=True)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric('Alertes ADWIN', int(hist['adwin'].sum()))
-    c2.metric('Alertes KSWIN', int(hist['kswin'].sum()))
-    c3.metric('Alertes Page-Hinkley', int(hist['page_hinkley'].sum()))
-    c4.metric('Learning rate courant', f"{drift_data['current_lr']:.2e}")
-
-    st.subheader('Historique des alertes')
-    alerts = hist[hist[['adwin', 'kswin', 'page_hinkley']].any(axis=1)]
-    st.dataframe(alerts, use_container_width=True, hide_index=True)
-
-# ═══════════════════════════════════════════════════════════════
-# PAGE 4 — ANALYSE DES SOURCES
-# ═══════════════════════════════════════════════════════════════
-elif page == '📊 Analyse des sources':
-    st.title('📊 Analyse des sources')
-
-    df = demo_articles(400) if (IS_CLOUD or db is None) else pd.DataFrame(
-        list(db.articles.find({}, {'_id': 0}).sort('processed_at', -1).limit(2000)))
-
-    if not df.empty:
-        by_source = df.groupby('source').agg(
-            n_articles=('source', 'size'),
-            taux_fake=('is_fake', 'mean'),
-        ).reset_index().sort_values('n_articles', ascending=False)
-        by_source['taux_fake'] = (by_source['taux_fake'] * 100).round(1)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = px.pie(by_source, names='source', values='n_articles', title='Répartition par source')
+    with col_l:
+        st.subheader("Répartition Fake / Réel")
+        if total > 0:
+            fig = go.Figure(data=[go.Pie(
+                labels=["Fake", "Réel"],
+                values=[fakes, reals],
+                hole=0.55,
+                marker_colors=[CLR_FAKE, CLR_REAL],
+                textfont_size=13,
+                hovertemplate="<b>%{label}</b><br>%{value} articles (%{percent})<extra></extra>"
+            )])
+            fig.update_layout(
+                showlegend=True, height=290,
+                margin=dict(t=10, b=10, l=10, r=10),
+                legend=dict(orientation="h", y=-0.12),
+                annotations=[dict(text=f"<b>{fake_pct:.1f}%</b><br>Fake",
+                                  x=0.5, y=0.5, font_size=15, showarrow=False)]
+            )
             st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            fig2 = px.bar(by_source, x='source', y='taux_fake', title='Taux de fake par source (%)',
-                          color='taux_fake', color_continuous_scale='RdYlGn_r')
+        else:
+            no_data_msg()
+
+    with col_r:
+        st.subheader("Tendance Horaire (24h)")
+        trend = fetch_virality(24)
+        if trend:
+            df_t = pd.DataFrame(trend)
+            df_t["heure"] = df_t["_id"].str[-2:] + "h"
+            df_t["fake_pct"] = (df_t["fakes"] / df_t["total"].replace(0, 1) * 100).round(1)
+            fig2 = go.Figure()
+            fig2.add_trace(go.Bar(x=df_t["heure"], y=df_t["total"],
+                                  name="Total", marker_color="#BDC3C7", opacity=0.5))
+            fig2.add_trace(go.Bar(x=df_t["heure"], y=df_t["fakes"],
+                                  name="Faux", marker_color=CLR_FAKE, opacity=0.85))
+            fig2.add_trace(go.Scatter(x=df_t["heure"], y=df_t["fake_pct"],
+                                      name="% Fake", yaxis="y2",
+                                      line=dict(color=CLR_DRIFT, width=2.5),
+                                      mode="lines+markers"))
+            fig2.update_layout(
+                barmode="overlay", height=290,
+                margin=dict(t=10, b=10, l=10, r=10),
+                legend=dict(orientation="h", y=-0.28),
+                yaxis=dict(title="Articles"),
+                yaxis2=dict(title="% Fake", overlaying="y", side="right",
+                            showgrid=False, range=[0, 100])
+            )
             st.plotly_chart(fig2, use_container_width=True)
+        else:
+            no_data_msg("Tendances non disponibles")
 
-        st.dataframe(by_source, use_container_width=True, hide_index=True)
+    st.markdown("---")
+
+    col_tbl, col_drift = st.columns([3, 2])
+
+    with col_tbl:
+        st.subheader("Articles récemment classifiés")
+        df = fetch_articles(limit=20)
+        if not df.empty:
+            df["Statut"]    = [status_label(f, v) for f, v in
+                               zip(df["is_fake"], df.get("verdict", [None] * len(df)))]
+            df["Confiance"] = (df["confidence"] * 100).round(1).astype(str) + "%"
+            df["P(fake)"]   = (df["p_fake"]     * 100).round(1).astype(str) + "%"
+            df["Titre"]     = df["title"].str[:70].fillna("")
+            st.dataframe(
+                df[["Statut", "Titre", "source", "Confiance", "P(fake)", "language"]].rename(
+                    columns={"source": "Source", "language": "Langue"}),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "Titre":  st.column_config.TextColumn(width="large"),
+                    "Statut": st.column_config.TextColumn(width="small"),
+                }
+            )
+            # Export
+            csv = df[["Statut","Titre","source","Confiance","P(fake)","language"]].to_csv(index=False)
+            st.download_button("Exporter CSV", csv, "articles_recent.csv", "text/csv")
+        else:
+            no_data_msg()
+
+    with col_drift:
+        st.subheader("Score de Drift (derniers événements)")
+        drift_evts = fetch_drift_events(limit=30)
+        if drift_evts:
+            df_drv = pd.DataFrame(drift_evts)
+            if "timestamp" in df_drv.columns and "composite_score" in df_drv.columns:
+                df_drv["timestamp"] = pd.to_datetime(df_drv["timestamp"])
+                fig_d = go.Figure()
+                fig_d.add_trace(go.Scatter(
+                    x=df_drv["timestamp"], y=df_drv["composite_score"],
+                    mode="lines+markers", name="Score",
+                    line=dict(color=CLR_DRIFT, width=2.5),
+                    fill="tozeroy", fillcolor="rgba(243,156,18,0.1)"
+                ))
+                fig_d.add_hline(y=thresholds["drift_crit"], line_dash="dash",
+                                line_color=CLR_FAKE, annotation_text="Seuil critique")
+                fig_d.update_layout(
+                    height=290, margin=dict(t=10, b=10),
+                    yaxis=dict(title="Score", range=[0, 1.05]),
+                    showlegend=False
+                )
+                st.plotly_chart(fig_d, use_container_width=True)
+        else:
+            st.success("Aucun drift — modèle stable")
+
+    st.markdown("---")
+    st.subheader("Performances du Modèle (ré-entraînement vérifié — reports/metrics_summary.json)")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("F1-macro (test)", "93.70%", "15 554 exemples tenus à l'écart")
+    m2.metric("AUC-ROC (test)",  "98.99%", "Average Precision 99.00%")
+    m3.metric("Latence ONNX INT8", "19.16 ms", "mesurée (100 itér., CPU dev)")
+    m4.metric("Meilleure époque",  "3 / 10", "early stopping patience 2")
+
+    if auto_refresh:
+        time.sleep(refresh_interval)
+        st.rerun()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 2 — ARTICLES EN TEMPS RÉEL
+# ═════════════════════════════════════════════════════════════════════════════
+elif "Articles" in page:
+    section_header("Articles Classifiés en Temps Réel")
+
+    cf1, cf2, cf3, cf4, cf5 = st.columns([2, 2, 2, 1, 1])
+    with cf1:
+        filtre_statut = st.selectbox("Statut", ["Tous", "Fake", "Réel", "Drift actif"])
+    with cf2:
+        try:
+            db_tmp = get_mongo()
+            sources = ["Toutes"] + sorted(db_tmp.articles.distinct("source")) if db_tmp else ["Toutes"]
+        except Exception:
+            sources = ["Toutes"]
+        filtre_source = st.selectbox("Source", sources)
+    with cf3:
+        nb_articles = st.slider("Nombre", 10, 300, 50, 10)
+    with cf4:
+        conf_min = st.slider("Conf. min", 0.0, 1.0, 0.0, 0.05)
+    with cf5:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("Rafraîchir", use_container_width=True, key="refresh_btn")
+
+    fake_only  = filtre_statut == "Fake"
+    real_only  = filtre_statut == "Réel"
+    drift_only = filtre_statut == "Drift actif"
+    src_f = None if filtre_source == "Toutes" else filtre_source
+
+    df = fetch_articles(limit=nb_articles * 2, fake_only=fake_only, real_only=real_only,
+                        source_filter=src_f, conf_min=conf_min, drift_only=drift_only)
+    df = df.head(nb_articles) if not df.empty else df
+
+    if not df.empty:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Affichés", len(df))
+        c2.metric("Faux",  int(df["is_fake"].sum()))
+        c3.metric("Vrais", int((df["is_fake"] == 0).sum()))
+        c4.metric("Conf. moy.", f"{df['confidence'].mean()*100:.1f}%" if "confidence" in df.columns else "—")
+        st.markdown("---")
+
+    if not df.empty:
+        ch1, ch2 = st.columns([1, 1])
+        with ch1:
+            st.subheader("Distribution des scores P(fake)")
+            fig_h = px.histogram(df, x="p_fake", color="is_fake", nbins=30, barmode="overlay",
+                                 color_discrete_map={1: CLR_FAKE, 0: CLR_REAL},
+                                 labels={"p_fake": "P(fake)", "is_fake": "Catégorie"}, opacity=0.75)
+            fig_h.update_layout(height=240, margin=dict(t=5, b=5),
+                                legend=dict(orientation="h", y=-0.35))
+            st.plotly_chart(fig_h, use_container_width=True)
+
+        with ch2:
+            st.subheader("Articles par source (top 10)")
+            src_c = df.groupby("source")["is_fake"].agg(total="count", fakes="sum").reset_index()
+            src_c = src_c.sort_values("total", ascending=False).head(10)
+            fig_s = go.Figure(data=[
+                go.Bar(name="Vrais", x=src_c["source"],
+                       y=src_c["total"] - src_c["fakes"], marker_color=CLR_REAL),
+                go.Bar(name="Faux",  x=src_c["source"],
+                       y=src_c["fakes"], marker_color=CLR_FAKE),
+            ])
+            fig_s.update_layout(barmode="stack", height=240, margin=dict(t=5, b=5),
+                                xaxis_tickangle=-30, legend=dict(orientation="h", y=-0.4))
+            st.plotly_chart(fig_s, use_container_width=True)
+
+        # Fréquences de mots
+        st.markdown("---")
+        ch3, ch4 = st.columns([1, 1])
+        with ch3:
+            st.subheader("Mots les plus fréquents (titres)")
+            wf = get_word_frequencies(df, n=20)
+            if not wf.empty:
+                fig_w = px.bar(wf, x="fréquence", y="mot", orientation="h",
+                               color="fréquence", color_continuous_scale="Reds", height=280)
+                fig_w.update_layout(margin=dict(t=5, b=5), showlegend=False,
+                                    coloraxis_showscale=False, yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig_w, use_container_width=True)
+
+        with ch4:
+            st.subheader("Distribution par langue")
+            if "language" in df.columns:
+                lang_c = df["language"].value_counts().reset_index()
+                lang_c.columns = ["Langue", "Count"]
+                fig_l = px.pie(lang_c, names="Langue", values="Count",
+                               color_discrete_sequence=px.colors.qualitative.Set2, height=280)
+                fig_l.update_layout(margin=dict(t=5, b=5))
+                st.plotly_chart(fig_l, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader(f"{len(df) if not df.empty else 0} articles")
+
+    if df.empty:
+        no_data_msg("Aucun article — pipeline en cours ou filtres trop restrictifs.")
     else:
-        st.info('Aucune donnée disponible.')
+        # Export
+        export_df = df.copy()
+        export_df["Statut"] = export_df["is_fake"].map({1: "FAKE", 0: "REEL"})
+        csv_exp = export_df[["Statut","title","source","language","confidence","p_fake",
+                              "drift_score","processed_at","url"]].to_csv(index=False)
+        st.download_button("Exporter tous les articles (CSV)", csv_exp,
+                           "articles_export.csv", "text/csv")
+        st.markdown("")
 
-# ═══════════════════════════════════════════════════════════════
-# PAGE 5 — RECHERCHE WEB (v2.1)
-# ═══════════════════════════════════════════════════════════════
-elif page == '🌍 Recherche web':
-    st.title('🌍 Recherche & classification en direct')
-    st.caption("Sources prioritaires : AFP Afrique, RFI, Jeune Afrique, Al Jazeera, France24, VOA Afrique — "
-               "architecture universelle, exportable hors d'Afrique.")
+        for _, row in df.iterrows():
+            is_fake  = row.get("is_fake", 0) == 1
+            badge    = "fake" if is_fake else "real"
+            btxt     = status_label(is_fake, row.get("verdict"))
+            conf     = row.get("confidence", 0) * 100
+            drift_ic = " [DRIFT]" if row.get("drift_active", False) else ""
 
-    tab1, tab2 = st.tabs(['🔎 Recherche web en direct', '🗄️ Base de données'])
+            with st.expander(f"{btxt}{drift_ic} — {row.get('title','(sans titre)')[:85]}"):
+                ca, cb = st.columns([3, 1])
+                with ca:
+                    st.markdown(f"**Source :** {row.get('source','?')} | **Langue :** {row.get('language','?')}")
+                    if row.get("body"):
+                        st.markdown(f"*{str(row.get('body',''))[:200]}...*")
+                    if row.get("url"):
+                        st.markdown(f"[Lien]({row.get('url')})")
+                with cb:
+                    st.metric("Confiance",  f"{conf:.1f}%")
+                    st.metric("P(fake)",    f"{row.get('p_fake',0)*100:.1f}%")
+                    if row.get("drift_active"):
+                        st.warning(f"Drift: {row.get('drift_score',0):.3f}")
+                    if row.get("processed_at"):
+                        st.caption(f"{str(row.get('processed_at',''))[:19]}")
 
-    with tab1:
-        q = st.text_input('Rechercher un sujet d\'actualité', placeholder='ex: élections, Ebola, coup d\'État...')
-        suggested = ['Élections présidentielles Afrique de l\'Ouest', 'Prix du carburant', 'Sécurité alimentaire Sahel']
-        st.caption('Suggestions : ' + ' · '.join(suggested))
-        if st.button('Analyser', type='primary') and q:
-            if IS_CLOUD:
-                st.warning("Fonctionnalité indisponible en mode démonstration (nécessite l'API FastAPI + Kafka locaux).")
-            else:
-                result = api_get('/api/v1/search/web', params={'q': q})
-                if result:
-                    for item in result.get('results', []):
-                        badge = '🔴 FAKE' if item['is_fake'] else '🟢 RÉEL'
-                        st.markdown(f"**{badge}** ({item['confidence']:.0%}) — [{item['title']}]({item['url']})")
+    if auto_refresh:
+        time.sleep(refresh_interval)
+        st.rerun()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 3 — RECHERCHE & ANALYSE
+# ═════════════════════════════════════════════════════════════════════════════
+elif "Recherche" in page:
+    section_header("Recherche & Analyse — Base de données & Internet")
+
+    if "search_history" not in st.session_state:
+        st.session_state["search_history"] = []
+
+    tab_web, tab_db = st.tabs(["Recherche Web en direct", "Base de données (Elasticsearch)"])
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ONGLET 1 — RECHERCHE WEB EN DIRECT
+    # ─────────────────────────────────────────────────────────────────────────
+    with tab_web:
+        st.markdown("""
+        <div style='background:linear-gradient(135deg,#1A537E,#2C3E50);border-radius:10px;
+                    padding:14px 18px;color:white;margin-bottom:16px;'>
+          <b>Recherche Web intelligente</b> — Saisissez n'importe quel sujet d'actualité.
+          Le moteur recherche sur internet (<b>Google News RSS</b> + DuckDuckGo en secours),
+          soumet les articles au modèle <b>Continual-DistilBERT</b> et vous indique en temps
+          réel si les nouvelles sont
+          <span style='color:#E74C3C;font-weight:bold;'>FAKE</span> ou
+          <span style='color:#2ECC71;font-weight:bold;'>RÉELLES</span>.<br>
+          <small>Les articles analysés enrichissent automatiquement l'apprentissage du modèle.</small>
+        </div>
+        """, unsafe_allow_html=True)
+
+        wq_col1, wq_col2, wq_col3 = st.columns([5, 1, 1])
+        with wq_col1:
+            web_query = st.text_input(
+                "Sujet à analyser",
+                placeholder="Ex: coup d'état Afrique, vaccin COVID, élections fraude, Ebola...",
+                label_visibility="collapsed",
+                key="web_search_input"
+            )
+        with wq_col2:
+            web_limit = st.selectbox("Articles", [5, 8, 10, 15],
+                                     index=1, label_visibility="collapsed", key="web_limit")
+        with wq_col3:
+            web_btn = st.button("Analyser", type="primary", use_container_width=True,
+                                key="web_search_btn")
+
+        # Exemples thématiques africains + globaux
+        st.markdown("**Sujets suggérés :**")
+        ex_cols = st.columns(6)
+        web_examples = [
+            ("Ebola Afrique","Santé"), ("élections Togo","Politique"),
+            ("coup d'état Niger","Géopolitique"), ("vaccin mpox","Santé"),
+            ("IA deepfake","Technologie"), ("désinformation Sahel","Sécurité")
+        ]
+        for col, (term, cat) in zip(ex_cols, web_examples):
+            with col:
+                st.markdown(f"""
+                <div style='background:white;border-radius:7px;padding:8px;text-align:center;
+                            box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.78rem;'>
+                  <b>{term}</b><br>
+                  <span style='color:#7F8C8D;font-size:0.7rem;'>{cat}</span>
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown("")
+
+        if web_btn and web_query:
+            if web_query not in st.session_state["search_history"]:
+                st.session_state["search_history"].insert(0, web_query)
+                st.session_state["search_history"] = st.session_state["search_history"][:10]
+
+            # ── MODE DÉMO (Streamlit Cloud) ───────────────────────────────────
+            if _IS_CLOUD:
+                _demo_web = [
+                    {"title": f"AFP : Analyse approfondie — {web_query}", "is_fake": 0, "confidence": 0.91, "p_fake": 0.09, "source": "AFP", "url": "https://www.afp.com", "body": f"Dakar (AFP) — Plusieurs sources officielles confirment les derniers développements concernant {web_query}."},
+                    {"title": f"RFI : Le point sur la situation — {web_query}", "is_fake": 0, "confidence": 0.88, "p_fake": 0.12, "source": "RFI", "url": "https://www.rfi.fr", "body": f"Paris (RFI) — Notre correspondant fait le point sur {web_query} après consultation des autorités compétentes."},
+                    {"title": f"EXCLUSIF : Ce que les médias cachent sur {web_query}", "is_fake": 1, "confidence": 0.95, "p_fake": 0.95, "source": "Blog anonyme", "url": "#", "body": f"Des sources anonymes révèlent une vérité choquante sur {web_query} que le gouvernement veut cacher."},
+                    {"title": f"Reuters: International reaction to {web_query}", "is_fake": 0, "confidence": 0.93, "p_fake": 0.07, "source": "Reuters", "url": "https://www.reuters.com", "body": f"LONDON (Reuters) - World leaders react to recent developments regarding {web_query}."},
+                    {"title": f"CHOC : La vérité cachée sur {web_query} enfin révélée !", "is_fake": 1, "confidence": 0.97, "p_fake": 0.97, "source": "Source inconnue", "url": "#", "body": f"Un lanceur d'alerte révèle des informations explosives sur {web_query} qui vont tout changer."},
+                    {"title": f"BBC : Coverage of latest {web_query} developments", "is_fake": 0, "confidence": 0.90, "p_fake": 0.10, "source": "BBC", "url": "https://www.bbc.com", "body": f"LONDON (BBC) - Our correspondents report on the latest {web_query} situation from multiple sources."},
+                    {"title": f"AFP : Réaction des organisations internationales face à {web_query}", "is_fake": 0, "confidence": 0.89, "p_fake": 0.11, "source": "AFP", "url": "https://www.afp.com", "body": f"Genève (AFP) — L'ONU et l'Union africaine publient un communiqué conjoint sur {web_query}."},
+                    {"title": f"URGENT : {web_query} — révélation explosive d'un insider", "is_fake": 1, "confidence": 0.94, "p_fake": 0.94, "source": "WhatsApp", "url": "#", "body": f"Un initié révèle ce qu'on ne vous dit pas sur {web_query}. Partagez avant censure !"},
+                ][:web_limit]
+                _cl_fake  = sum(1 for a in _demo_web if a["is_fake"] == 1)
+                _cl_real  = len(_demo_web) - _cl_fake
+                _cl_fpct  = _cl_fake / len(_demo_web) * 100
+                k1, k2, k3, k4, k5 = st.columns(5)
+                k1.metric("Trouvés sur le web", len(_demo_web))
+                k2.metric("Classifiés", len(_demo_web))
+                k3.metric("Fake", _cl_fake)
+                k4.metric("Réels", _cl_real)
+                k5.metric("Taux fake", f"{_cl_fpct:.1f}%",
+                          delta="Élevé" if _cl_fpct > 50 else "Normal",
+                          delta_color="inverse" if _cl_fpct > 50 else "normal")
+                st.info("Mode Démo — résultats simulés pour illustrer la classification en temps réel.")
+                st.markdown("---")
+                _df_demo_web = pd.DataFrame(_demo_web)
+                _df_demo_web["label"] = _df_demo_web["is_fake"].map({1: "FAKE", 0: "RÉEL"})
+                _df_demo_web["titre_court"] = _df_demo_web["title"].str[:50]
+                fig_web_d = px.bar(_df_demo_web, x="titre_court", y="p_fake", color="label",
+                                   color_discrete_map={"FAKE": CLR_FAKE, "RÉEL": CLR_REAL},
+                                   title=f"Score de désinformation — « {web_query} »",
+                                   labels={"p_fake": "Probabilité fake", "titre_court": "Article"}, height=280)
+                fig_web_d.add_hline(y=0.75, line_dash="dash", line_color="orange", annotation_text="Seuil 0.75")
+                fig_web_d.update_layout(margin=dict(t=40, b=5), xaxis_tickangle=-30, showlegend=True)
+                st.plotly_chart(fig_web_d, use_container_width=True)
+                st.markdown("---")
+                st.subheader("Résultats détaillés")
+                for art in _demo_web:
+                    _badge = "FAKE" if art["is_fake"] else "RÉEL"
+                    with st.expander(f"{_badge} {art['title'][:85]}"):
+                        st.markdown(f"**Source :** {art['source']} | **Confiance :** {art['confidence']*100:.1f}% | **P(fake) :** {art['p_fake']*100:.1f}%")
+                        st.markdown(art["body"])
+                        if art["url"] != "#":
+                            st.markdown(f"[Lien]({art['url']})")
+                st.stop()
+            # ─────────────────────────────────────────────────────────────────
+
+            progress_bar = st.progress(0, text="Recherche sur internet…")
+            status_area  = st.empty()
+
+            try:
+                status_area.info("Interrogation de DuckDuckGo News… (jusqu'à 30s si beaucoup de requêtes)")
+                progress_bar.progress(20, text="Récupération des articles…")
+
+                resp = requests.get(
+                    f"{API_BASE}/api/v1/search/web",
+                    params={"q": web_query, "limit": web_limit},
+                    timeout=60   # 3 retries × (3+8+15)s = 26s max côté API
+                )
+
+                if resp.status_code == 429:
+                    progress_bar.empty()
+                    status_area.warning(
+                        "**DuckDuckGo a temporairement bloqué les requêtes** — "
+                        "l'API a déjà réessayé 3 fois automatiquement. "
+                        "Attendez **2-3 minutes** puis relancez la recherche.\n\n"
+                        "_Conseil : évitez d'enchaîner plusieurs recherches trop vite._"
+                    )
+                elif resp.status_code != 200:
+                    progress_bar.empty()
+                    try:
+                        detail = resp.json().get("detail", resp.text[:200])
+                    except Exception:
+                        detail = resp.text[:200]
+                    if any(x in str(detail).lower() for x in ["403", "ratelimit", "rate limit"]):
+                        status_area.warning(
+                            "**DuckDuckGo a bloqué la requête (rate limit)**. "
+                            "Attendez **2-3 minutes** et réessayez."
+                        )
+                    else:
+                        status_area.error(f"Erreur API {resp.status_code} — {detail}")
                 else:
-                    st.error("L'API n'a pas répondu — vérifier que le service `api` est démarré.")
+                    data = resp.json()
+                    articles_web = data.get("articles", [])
+                    total_found  = data.get("total_found", 0)
+                    n_classified = data.get("classified", 0)
+                    n_pending    = data.get("pending", 0)
+                    is_cached    = data.get("cached", False)
 
-    with tab2:
-        query2 = st.text_input('Recherche full-text (Elasticsearch)', key='es_search')
-        st.info('Recherche indexée sur les articles déjà traités par le pipeline — voir page "Explorer les articles".')
+                    progress_bar.progress(80, text="Classification en cours…")
+                    if is_cached:
+                        status_area.info("Résultats depuis le cache (moins de 5 min) — DuckDuckGo non ré-interrogé.")
+                    else:
+                        status_area.empty()
 
-# ═══════════════════════════════════════════════════════════════
-# PAGE 6 — CONFIGURATION
-# ═══════════════════════════════════════════════════════════════
-elif page == '⚙️ Configuration':
-    st.title('⚙️ Configuration live du pipeline')
-    st.warning('Ces paramètres sont indicatifs dans cette version du dashboard : '
-               'la persistance des changements nécessite un endpoint API dédié (non prioritaire pour la soutenance).')
+                    if not articles_web:
+                        progress_bar.empty()
+                        st.warning(f"Aucun article trouvé pour **{web_query}** sur internet.")
+                    else:
+                        progress_bar.progress(100, text="Terminé !")
+                        time.sleep(0.3)
+                        progress_bar.empty()
 
-    st.slider('Seuil de décision fake (p_fake ≥ seuil)', 0.5, 0.95, 0.75, 0.01)
-    st.slider('Intervalle de scraping RSS (secondes)', 15, 300, 60, 5)
-    st.slider('Rafraîchissement dashboard (secondes)', 5, 120, REFRESH_SEC, 5)
-    st.number_input('Taille du reservoir buffer (online learning)', 500, 20000, 5000, 500)
+                        # KPIs
+                        classified_arts = [a for a in articles_web if a.get("is_fake") is not None]
+                        n_fake_w  = sum(1 for a in classified_arts if a.get("is_fake") == 1)
+                        n_real_w  = sum(1 for a in classified_arts if a.get("is_fake") == 0)
+                        fake_pct_w = n_fake_w / len(classified_arts) * 100 if classified_arts else 0
 
-    st.subheader('À propos')
+                        k1, k2, k3, k4, k5 = st.columns(5)
+                        k1.metric("Trouvés sur le web", total_found)
+                        k2.metric("Classifiés", n_classified)
+                        k3.metric("Fake", n_fake_w)
+                        k4.metric("Réels", n_real_w)
+                        k5.metric("Taux fake", f"{fake_pct_w:.1f}%",
+                                  delta="Élevé" if fake_pct_w > 50 else "Normal",
+                                  delta_color="inverse" if fake_pct_w > 50 else "normal")
+
+                        if n_pending > 0:
+                            st.info(f"{n_pending} article(s) encore en cours de classification "
+                                    f"(délai Spark). Actualisez dans quelques secondes.")
+
+                        st.markdown(f"*{data.get('message','')}*")
+                        st.markdown("---")
+
+                        # Graphique de confiance
+                        if classified_arts:
+                            df_web = pd.DataFrame(classified_arts)
+                            if "p_fake" in df_web.columns and "title" in df_web.columns:
+                                df_web["label"]  = df_web["is_fake"].map({1: "FAKE", 0: "RÉEL"})
+                                df_web["titre_court"] = df_web["title"].str[:50]
+                                fig_web = px.bar(
+                                    df_web, x="titre_court", y="p_fake",
+                                    color="label",
+                                    color_discrete_map={"FAKE": CLR_FAKE, "RÉEL": CLR_REAL},
+                                    title=f"Score de désinformation — « {web_query} »",
+                                    labels={"p_fake": "Probabilité fake", "titre_court": "Article"},
+                                    height=280
+                                )
+                                fig_web.add_hline(y=0.5, line_dash="dash",
+                                                  line_color="orange", annotation_text="Seuil 50%")
+                                fig_web.update_layout(margin=dict(t=40, b=5),
+                                                      xaxis_tickangle=-30, showlegend=True)
+                                st.plotly_chart(fig_web, use_container_width=True)
+
+                        st.markdown("### Résultats détaillés")
+                        for art in articles_web:
+                            is_f   = art.get("is_fake")
+                            conf   = art.get("confidence") or 0
+                            p_fake = art.get("p_fake") or 0
+                            url    = art.get("url", "")
+                            title  = art.get("title", "(sans titre)")
+                            source = art.get("source", "?")
+
+                            if is_f is None:
+                                badge = "EN ATTENTE"
+                                card_color = "#F8F9FA"
+                                border_color = "#BDC3C7"
+                            elif is_f == 1:
+                                badge = "FAKE"
+                                card_color = "#FDEDEC"
+                                border_color = CLR_FAKE
+                            else:
+                                badge = "RÉEL"
+                                card_color = "#EAFAF1"
+                                border_color = CLR_REAL
+
+                            with st.expander(f"{badge}  {title[:80]}"):
+                                col_l, col_r = st.columns([3, 1])
+                                with col_l:
+                                    st.markdown(f"**Source :** {source}")
+                                    if url:
+                                        st.markdown(f"**Lien original :** [{url[:70]}...]({url})")
+                                    if art.get("body"):
+                                        st.markdown(f"*{art['body'][:300]}…*")
+                                with col_r:
+                                    if is_f is not None:
+                                        st.metric("Confiance", f"{conf*100:.1f}%")
+                                        st.metric("P(fake)", f"{p_fake*100:.1f}%")
+                                        verdict = "Désinformation probable" if is_f == 1 else "Information fiable"
+                                        st.markdown(f"**Verdict :** {verdict}")
+
+                        # Export CSV
+                        if articles_web:
+                            df_exp = pd.DataFrame(articles_web)
+                            csv_web = df_exp[["title","url","source","is_fake","confidence","p_fake"]].to_csv(index=False)
+                            st.download_button(
+                                "Exporter résultats web (CSV)", csv_web,
+                                f"web_search_{web_query[:20]}.csv", "text/csv"
+                            )
+            except requests.exceptions.Timeout:
+                progress_bar.empty()
+                st.warning("**Délai dépassé** — DuckDuckGo est lent en ce moment. Attendez 30 secondes et réessayez.")
+            except Exception as e:
+                progress_bar.empty()
+                st.error(f"Erreur : {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ONGLET 2 — BASE DE DONNÉES (Elasticsearch)
+    # ─────────────────────────────────────────────────────────────────────────
+    with tab_db:
+        st.markdown("Recherche dans les articles **déjà traités** par le pipeline (index Elasticsearch).")
+
+        cs1, cs2, cs3 = st.columns([4, 1, 1])
+        with cs1:
+            query = st.text_input("Requête",
+                                  placeholder="Ex: désinformation, Covid, élections, Ukraine...",
+                                  label_visibility="collapsed", key="db_search_input")
+        with cs2:
+            nb_results = st.selectbox("Résultats", [10, 20, 50],
+                                      label_visibility="collapsed", key="db_nb")
+        with cs3:
+            fake_filter_opt = st.selectbox("Filtrer", ["Tous", "Fake only", "Réel only"],
+                                           label_visibility="collapsed", key="db_filter")
+
+        fake_f = None
+        if fake_filter_opt == "Fake only":  fake_f = 1
+        if fake_filter_opt == "Réel only":  fake_f = 0
+
+        if query:
+            if query not in st.session_state["search_history"]:
+                st.session_state["search_history"].insert(0, query)
+                st.session_state["search_history"] = st.session_state["search_history"][:10]
+
+            with st.spinner("Recherche dans la base…"):
+                results = search_articles(query, size=nb_results, fake_filter=fake_f)
+
+            if results.empty:
+                st.warning(f"Aucun résultat dans la base pour **{query}**. "
+                           f"Essayez la **Recherche Web** pour analyser des articles sur internet.")
+            else:
+                total_r = len(results)
+                fakes_r = int(results["is_fake"].sum()) if "is_fake" in results.columns else 0
+                reals_r = total_r - fakes_r
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Résultats", total_r)
+                c2.metric("Faux", fakes_r)
+                c3.metric("Vrais", reals_r)
+                if fakes_r + reals_r > 0:
+                    c4.metric("Taux fake", f"{fakes_r/(fakes_r+reals_r)*100:.1f}%")
+
+                st.markdown("---")
+                cr1, cr2 = st.columns([1, 1])
+                with cr1:
+                    if "p_fake" in results.columns:
+                        fig_sc = px.scatter(
+                            results, x=results.index, y="p_fake", color="is_fake",
+                            color_discrete_map={1: CLR_FAKE, 0: CLR_REAL},
+                            size="confidence" if "confidence" in results.columns else None,
+                            hover_data=["title"] if "title" in results.columns else [],
+                            labels={"p_fake": "Score Fake", "index": "Rang"},
+                            title=f"Scores — « {query} »", height=260
+                        )
+                        fig_sc.update_layout(margin=dict(t=40, b=5), showlegend=False)
+                        st.plotly_chart(fig_sc, use_container_width=True)
+                with cr2:
+                    wf_r = get_word_frequencies(results, n=15)
+                    if not wf_r.empty:
+                        fig_wr = px.bar(wf_r, x="fréquence", y="mot", orientation="h",
+                                        color="fréquence", color_continuous_scale="Blues",
+                                        title="Mots fréquents", height=260)
+                        fig_wr.update_layout(margin=dict(t=40, b=5), showlegend=False,
+                                             coloraxis_showscale=False,
+                                             yaxis=dict(autorange="reversed"))
+                        st.plotly_chart(fig_wr, use_container_width=True)
+
+                if not results.empty:
+                    csv_r = results.to_csv(index=False)
+                    st.download_button("Exporter résultats (CSV)", csv_r,
+                                       f"recherche_{query[:20]}.csv", "text/csv")
+
+                st.markdown("---")
+                st.subheader("Résultats détaillés")
+                for _, row in results.iterrows():
+                    is_fake = row.get("is_fake", 0) == 1
+                    btxt    = "FAKE" if is_fake else "RÉEL"
+                    conf    = row.get("confidence", 0) * 100
+                    with st.expander(f"{btxt} {row.get('title','(sans titre)')[:85]}"):
+                        st.markdown(f"**Source :** {row.get('source','?')} | "
+                                    f"**Langue :** {row.get('language','?')} | "
+                                    f"**Confiance :** {conf:.1f}%")
+                        if row.get("url"):
+                            st.markdown(f"[Lien]({row.get('url')})")
+        else:
+            if st.session_state["search_history"]:
+                st.markdown("#### Recherches récentes")
+                cols_h = st.columns(min(5, len(st.session_state["search_history"])))
+                for col, term in zip(cols_h, st.session_state["search_history"][:5]):
+                    col.markdown(f"""
+                    <div style='background:white;border-radius:8px;padding:10px;
+                                text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.1);
+                                font-size:0.85rem;'>{term}</div>
+                    """, unsafe_allow_html=True)
+                st.markdown("---")
+
+            st.markdown("#### Exemples de recherches")
+            examples = [("COVID-19","Pandémie"), ("élections","Politique"),
+                        ("Ukraine","Géopolitique"), ("vaccins","Santé"),
+                        ("deepfake","Technologie")]
+            cols_e = st.columns(len(examples))
+            for col, (term, cat) in zip(cols_e, examples):
+                with col:
+                    st.markdown(f"""
+                    <div style='background:white;border-radius:8px;padding:12px;
+                                text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>
+                      <div style='font-weight:600;'>{term}</div>
+                      <div style='font-size:0.75rem;color:#7F8C8D;'>{cat}</div>
+                    </div>""", unsafe_allow_html=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 4 — DRIFT & APPRENTISSAGE
+# ═════════════════════════════════════════════════════════════════════════════
+elif "Drift" in page:
+    section_header("Détection de Concept Drift & Apprentissage Continu")
+
     st.markdown("""
-    Ce pipeline est déployé et pensé en priorité pour un contexte **africain et francophone**
-    (sources : AFP Afrique, RFI, Jeune Afrique, Al Jazeera, France24, VOA Afrique), avec un
-    sous-corpus d'entraînement multilingue (MasakhaNEWS, 11 langues africaines). L'architecture
-    reste néanmoins universelle et exportable hors d'Afrique.
+    Tri-détecteur hybride basé sur **River 0.21.2** :
+    - **ADWIN** (poids 0.45) — dérive abrupte par fenêtre adaptative
+    - **KSWIN** (poids 0.35) — changement statistique (Kolmogorov-Smirnov)
+    - **PageHinkley** (poids 0.20) — dérive graduelle par somme cumulée
     """)
 
-if not IS_CLOUD:
-    time.sleep(0.1)  # évite un rafraîchissement trop agressif en dev local
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Seuil d'alerte",      "0.40", "score composite (DRIFT_COMPOSITE_THRESHOLD)")
+    d2.metric("Seuil de confirmation", "0.80", "score composite (DRIFT_CONFIRMED_THRESHOLD)")
+    d3.metric("LR — régime stable",  "1e-5", "ONLINE_LR_BASE")
+    d4.metric("LR — régime de dérive", "5e-5", "ONLINE_LR_DRIFT")
+
+    st.markdown("---")
+    st.subheader("Formule du Score Composite")
+    st.latex(r"S = 0.45 \times ADWIN + 0.35 \times KSWIN + 0.20 \times PageHinkley")
+
+    st.markdown("---")
+
+    drift_events = fetch_drift_events(limit=100)
+    col_ev, col_stat = st.columns([3, 1])
+
+    with col_ev:
+        st.subheader(f"Historique des Événements ({len(drift_events)})")
+        if drift_events:
+            df_dr = pd.DataFrame(drift_events)
+            if "timestamp" in df_dr.columns:
+                df_dr["timestamp"] = pd.to_datetime(df_dr["timestamp"])
+
+                # Score composite global
+                fig_comp = go.Figure()
+                fig_comp.add_trace(go.Scatter(
+                    x=df_dr["timestamp"], y=df_dr.get("composite_score", pd.Series([0]*len(df_dr))),
+                    mode="lines+markers", name="Score composite",
+                    line=dict(color=CLR_DRIFT, width=2.5),
+                    fill="tozeroy", fillcolor="rgba(243,156,18,0.12)"
+                ))
+                fig_comp.add_hline(y=0.4, line_dash="dash", line_color=CLR_FAKE,
+                                   annotation_text="Alerte (0.4)")
+                fig_comp.add_hline(y=0.8, line_dash="dash", line_color=CLR_PURPLE,
+                                   annotation_text="Confirmation (0.8)")
+                fig_comp.update_layout(
+                    title="Score composite de drift", height=300,
+                    margin=dict(t=30, b=10),
+                    yaxis=dict(title="Score", range=[0, 1.05])
+                )
+                st.plotly_chart(fig_comp, use_container_width=True)
+
+                # Détecteurs individuels si disponibles
+                sigs = df_dr.get("signals")
+                if sigs is not None:
+                    try:
+                        df_dr["adwin"] = df_dr["signals"].apply(
+                            lambda s: 1 if isinstance(s, dict) and s.get("ADWIN") else 0)
+                        df_dr["kswin"] = df_dr["signals"].apply(
+                            lambda s: 1 if isinstance(s, dict) and s.get("KSWIN") else 0)
+                        df_dr["ph"] = df_dr["signals"].apply(
+                            lambda s: 1 if isinstance(s, dict) and s.get("PageHinkley") else 0)
+                        fig_det = go.Figure()
+                        fig_det.add_trace(go.Scatter(
+                            x=df_dr["timestamp"], y=df_dr["adwin"].cumsum(),
+                            name="ADWIN (cum.)", line=dict(color="#E74C3C")))
+                        fig_det.add_trace(go.Scatter(
+                            x=df_dr["timestamp"], y=df_dr["kswin"].cumsum(),
+                            name="KSWIN (cum.)", line=dict(color="#3498DB")))
+                        fig_det.add_trace(go.Scatter(
+                            x=df_dr["timestamp"], y=df_dr["ph"].cumsum(),
+                            name="PageHinkley (cum.)", line=dict(color="#2ECC71")))
+                        fig_det.update_layout(
+                            title="Déclenchements cumulés par détecteur", height=240,
+                            margin=dict(t=30, b=10), legend=dict(orientation="h", y=-0.3))
+                        st.plotly_chart(fig_det, use_container_width=True)
+                    except Exception:
+                        pass
+
+            # Export
+            csv_d = pd.DataFrame(drift_events).to_csv(index=False)
+            st.download_button("Exporter événements drift (CSV)", csv_d,
+                               "drift_events.csv", "text/csv")
+
+            st.subheader("Derniers événements")
+            for ev in drift_events[:5]:
+                confirmed = ev.get("drift_confirmed", False)
+                st.markdown(f"""
+                <div class="drift-alert">
+                    <strong>{"CONFIRMÉ" if confirmed else "Détecté"}</strong>
+                    — Score : <b>{ev.get("composite_score",0):.3f}</b><br>
+                    <small>ADWIN: {ev.get("signals",{}).get("ADWIN","?")} |
+                           KSWIN: {ev.get("signals",{}).get("KSWIN","?")} |
+                           PH: {ev.get("signals",{}).get("PageHinkley","?")}</small><br>
+                    <small>{str(ev.get("timestamp",""))[:19]} |
+                           LR recommandé : {ev.get("recommended_lr","?")}</small>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("Aucun drift détecté — le modèle est stable.")
+
+    with col_stat:
+        st.subheader("Statistiques")
+        st.metric("Événements", len(drift_events))
+        confirmed = sum(1 for e in drift_events if e.get("drift_confirmed", False))
+        st.metric("Confirmés", confirmed)
+        if drift_events:
+            avg_sc = np.mean([e.get("composite_score", 0) for e in drift_events])
+            st.metric("Score moyen", f"{avg_sc:.3f}")
+            max_sc = max(e.get("composite_score", 0) for e in drift_events)
+            st.metric("Score max", f"{max_sc:.3f}")
+
+        st.markdown("---")
+        st.subheader("Apprentissage continu")
+        st.markdown("""
+        **Reservoir** : 5 000 exemples (RESERVOIR_BUFFER_SIZE)
+
+        **Entraînement en ligne** : 1 micro-batch sur 5 (ONLINE_TRAIN_EVERY_N)
+
+        **Sync ONNX** : tous les 100 batches (SYNC_ONNX_EVERY)
+        """)
+
+    # ── Panneau de simulation de dérive ──────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Simuler un Concept Drift")
+
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#2C3E50,#8E44AD);border-radius:10px;
+                padding:14px 18px;color:white;margin-bottom:16px;">
+      <b>Comment fonctionne la simulation ?</b><br>
+      <small>
+      La simulation injecte des <b>articles faux</b> dans le flux Kafka pour provoquer
+      artificiellement une dérive de concept. Le détecteur tri-hybride (ADWIN + KSWIN + PageHinkley)
+      réagit en quelques minutes. <br>
+Le drift reste <b>observable pendant une fenêtre de visualisation</b> (5-10 min), puis
+      des articles réels sont envoyés <b>automatiquement</b> pour rééquilibrer le modèle et
+      revenir à l'état normal — le drift n'est jamais un état permanent.<br>
+La simulation ne modifie <b>pas</b> les analyses de recherche web — elle sert uniquement
+      à démontrer la détection de dérive.
+      </small>
+    </div>
+    """, unsafe_allow_html=True)
+
+    sim_col1, sim_col2 = st.columns([3, 1])
+    with sim_col1:
+        scenario_labels = {
+            "B — Graduel (recommandé)":     "B",
+            "A — Abrupt":                   "A",
+            "C — Cyclique":                 "C",
+            "D — Incrémental":              "D",
+        }
+        scenario_choice = st.selectbox(
+            "Scénario",
+            list(scenario_labels.keys()),
+            index=0,
+            help="B=50%→90% progressif | A=bloc abrupt | C=pics répétés | D=montée lente"
+        )
+        with_recovery_toggle = st.checkbox(
+            "Récupération automatique après le drift (recommandé)",
+            value=True,
+            help="Envoie des articles réels fiables après la fenêtre de visualisation pour rééquilibrer le modèle"
+        )
+        visualization_minutes = st.slider(
+            "Fenêtre de visualisation du drift (minutes)",
+            min_value=1, max_value=10, value=5, step=1,
+            disabled=not with_recovery_toggle,
+            help="Durée pendant laquelle le drift reste actif et observable dans Grafana/Streamlit "
+                 "avant le retour automatique à la normale."
+        )
+    with sim_col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        inject_btn = st.button("Lancer la simulation", use_container_width=True, type="primary")
+        st.markdown("<br>", unsafe_allow_html=True)
+        recover_btn = st.button("Récupérer maintenant", use_container_width=True,
+                                help="Envoie des articles réels pour rééquilibrer le modèle")
+
+    if inject_btn and API_BASE:
+        scenario_code = scenario_labels[scenario_choice]
+        try:
+            with st.spinner(f"Injection du scénario {scenario_code} en cours..."):
+                resp = requests.post(
+                    f"{API_BASE}/api/v1/drift/inject",
+                    params={"scenario": scenario_code, "with_recovery": with_recovery_toggle,
+                            "visualization_window": visualization_minutes * 60},
+                    timeout=10
+                )
+            if resp.ok:
+                data = resp.json()
+                st.success(
+                    f"**Scénario {data.get('scenario')} lancé en arrière-plan.**\n\n"
+                    f"{data.get('message', '')}\n\n"
+                    f"Résultats visibles dans Grafana et dans l'historique ci-dessus dans ~2 minutes."
+                )
+                if with_recovery_toggle:
+                    st.info(f"Drift observable pendant ~{visualization_minutes} min, puis récupération "
+                            "automatique — le modèle reviendra à la normale sans intervention manuelle.")
+                st.info("Activez le **rafraîchissement auto** (barre latérale) pour suivre l'évolution en temps réel.")
+            else:
+                st.error(f"Erreur API ({resp.status_code}) : {resp.text[:200]}")
+        except Exception as e:
+            st.error(f"Connexion à l'API impossible : {e}")
+    elif inject_btn and not API_BASE:
+        st.warning("API non disponible — pipeline Docker non démarré.")
+
+    if recover_btn and API_BASE:
+        try:
+            with st.spinner("Lancement de la récupération..."):
+                resp = requests.post(f"{API_BASE}/api/v1/drift/recover", timeout=10)
+            if resp.ok:
+                st.success(
+                    "**Récupération lancée !** 100 articles réels fiables ont été envoyés "
+                    "dans le flux Kafka. Le modèle reviendra progressivement à la normale "
+                    "dans les 2-3 prochaines minutes."
+                )
+            else:
+                st.error(f"Erreur lors de la récupération ({resp.status_code})")
+        except Exception as e:
+            st.error(f"Connexion à l'API impossible : {e}")
+    elif recover_btn and not API_BASE:
+        st.warning("API non disponible — pipeline Docker non démarré.")
+
+    st.markdown("""
+    <div style="background:#F8F9FA;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.85rem;">
+    <b>Description des scénarios :</b><br>
+<b>B — Graduel</b> : taux fake monte de 50% → 90% sur 120 articles (~5 min) + récupération → scénario recommandé pour la soutenance<br>
+<b>A — Abrupt</b> : 30 articles normaux puis bloc de 80 articles à 90% fake — ADWIN détecte en &lt; 10 messages<br>
+<b>C — Cyclique</b> : 3 pics fake/réel alternés — simule une campagne récurrente de désinformation<br>
+<b>D — Incrémental</b> : montée très lente 30% → 90% sur 200 articles — KSWIN excelle sur ce scénario<br><br>
+    <b>Cycle complet :</b> Simulation drift → Détection tri-hybride → Alerte → Récupération → Retour à la normale
+    </div>
+    """, unsafe_allow_html=True)
+
+    if auto_refresh:
+        time.sleep(refresh_interval)
+        st.rerun()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 5 — ALERTES
+# ═════════════════════════════════════════════════════════════════════════════
+elif "Alertes" in page:
+    section_header("Centre d'Alertes — Surveillance Intelligente")
+
+    # ── Alertes actives ───────────────────────────────────────────────────────
+    st.subheader("État Actuel des Alertes")
+    current_stats = fetch_stats()
+    current_alerts = evaluate_alerts(current_stats, thresholds)
+
+    if not current_alerts:
+        st.markdown('<div class="alert-ok"><strong>Tous les indicateurs sont normaux</strong> — aucune alerte active</div>',
+                    unsafe_allow_html=True)
+    else:
+        for a in current_alerts:
+            cls  = "alert-critical" if a["severity"] == "critical" else "alert-warning"
+            icon = "CRITIQUE" if a["severity"] == "critical" else "AVERTISSEMENT"
+            ts   = a.get("timestamp", "")[:19]
+            st.markdown(f"""
+            <div class="{cls}">
+                <strong>{icon} — {a['title']}</strong><br>
+                {a['message']}<br>
+                <small>{ts}</small>
+            </div>
+            """, unsafe_allow_html=True)
+            save_alert_event(a)
+
+    st.markdown("---")
+
+    # ── Tableau de bord des indicateurs ──────────────────────────────────────
+    st.subheader("Indicateurs en Temps Réel")
+
+    fake_pct  = current_stats.get("fake_rate",    0.0)
+    total_art = current_stats.get("total_articles", 0)
+    n_drifts  = current_stats.get("drift_events",   0)
+
+    ai1, ai2, ai3, ai4 = st.columns(4)
+    with ai1:
+        kpi_card("Taux de fake", f"{fake_pct:.1f}", "fake" if fake_pct > 50 else "info", "%")
+    with ai2:
+        kpi_card("Articles traités", f"{total_art:,}", "info")
+    with ai3:
+        kpi_card("Événements drift", f"{n_drifts}", "drift")
+    with ai4:
+        h = fetch_health()
+        services_ok = sum(1 for v in h.values() if v == "up")
+        kpi_card("Services UP", f"{services_ok}/{len(h)}", "real" if services_ok == len(h) else "warn")
+
+    st.markdown("---")
+
+    # ── Jauge du taux de fake ─────────────────────────────────────────────────
+    col_g1, col_g2 = st.columns(2)
+    with col_g1:
+        st.subheader("Taux de désinformation")
+        fig_gauge = go.Figure(go.Indicator(
+            mode="gauge+number+delta",
+            value=fake_pct,
+            title={"text": "Fake Rate (%)"},
+            delta={"reference": thresholds["fake_rate_warn"]},
+            gauge={
+                "axis": {"range": [0, 100]},
+                "bar": {"color": CLR_FAKE if fake_pct > thresholds["fake_rate_crit"]
+                                else (CLR_DRIFT if fake_pct > thresholds["fake_rate_warn"]
+                                      else CLR_REAL)},
+                "steps": [
+                    {"range": [0,  thresholds["fake_rate_warn"]], "color": "#EAFAF1"},
+                    {"range": [thresholds["fake_rate_warn"], thresholds["fake_rate_crit"]], "color": "#FEF9E7"},
+                    {"range": [thresholds["fake_rate_crit"], 100], "color": "#FDEDEC"},
+                ],
+                "threshold": {
+                    "line": {"color": "red", "width": 3},
+                    "thickness": 0.75,
+                    "value": thresholds["fake_rate_crit"]
+                }
+            }
+        ))
+        fig_gauge.update_layout(height=280, margin=dict(t=10, b=10, l=30, r=30))
+        st.plotly_chart(fig_gauge, use_container_width=True)
+
+    with col_g2:
+        st.subheader("Historique des alertes")
+        alert_hist = fetch_alert_history(limit=30)
+        if alert_hist:
+            df_ah = pd.DataFrame(alert_hist)
+            if "timestamp" in df_ah.columns and "metric" in df_ah.columns:
+                df_ah["timestamp"] = pd.to_datetime(df_ah["timestamp"])
+                df_ah["severity_num"] = df_ah["severity"].map(
+                    {"critical": 2, "warning": 1}).fillna(0)
+                fig_ah = px.scatter(
+                    df_ah, x="timestamp", y="metric",
+                    color="severity",
+                    color_discrete_map={"critical": CLR_FAKE, "warning": CLR_DRIFT},
+                    size="severity_num",
+                    title="Alertes déclenchées",
+                    height=280,
+                    labels={"metric": "Indicateur", "timestamp": ""}
+                )
+                fig_ah.update_layout(margin=dict(t=40, b=10),
+                                     legend=dict(orientation="h", y=-0.3))
+                st.plotly_chart(fig_ah, use_container_width=True)
+            else:
+                no_data_msg("Format d'historique inattendu")
+        else:
+            st.info("Aucun historique d'alerte disponible pour cette session.")
+
+    st.markdown("---")
+
+    # ── Règles d'alerte configurées ───────────────────────────────────────────
+    st.subheader("Règles d'Alerte Actives")
+    rules_data = {
+        "Règle": [
+            "Taux de fake (avertissement)",
+            "Taux de fake (critique)",
+            "Score drift (avertissement)",
+            "Score drift (critique)",
+            "Confiance modèle (faible)",
+        ],
+        "Seuil": [
+            f"> {thresholds['fake_rate_warn']:.0f}%",
+            f"> {thresholds['fake_rate_crit']:.0f}%",
+            f"> {thresholds['drift_warn']:.2f}",
+            f"> {thresholds['drift_crit']:.2f}",
+            f"< {thresholds['conf_low']*100:.0f}%",
+        ],
+        "Sévérité": ["Avertissement", "Critique", "Avertissement", "Critique", "Avertissement"],
+        "Délai évaluation": ["5 min", "5 min", "2 min", "1 min", "10 min"],
+        "Statut": ["Actif", "Actif", "Actif", "Actif", "Actif"],
+    }
+    st.dataframe(pd.DataFrame(rules_data), use_container_width=True, hide_index=True)
+
+    if alert_hist:
+        csv_ah = pd.DataFrame(alert_hist).to_csv(index=False)
+        st.download_button("Exporter historique alertes (CSV)", csv_ah,
+                           "alertes_historique.csv", "text/csv")
+
+    if auto_refresh:
+        time.sleep(refresh_interval)
+        st.rerun()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 6 — INFRASTRUCTURE
+# ═════════════════════════════════════════════════════════════════════════════
+elif "Infrastructure" in page:
+    section_header("État de l'Infrastructure Docker")
+
+    col_hdr, col_btn = st.columns([4, 1])
+    with col_btn:
+        if st.button("Reconnecter", use_container_width=True):
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            st.rerun()
+
+    services_status = check_services()
+    n_up = sum(services_status.values())
+    n_total = len(services_status)
+    st.markdown(f"**{n_up}/{n_total} services opérationnels** "
+                f"({'OK' if n_up == n_total else 'ATTENTION'})")
+    st.markdown("")
+
+    services_info = {
+        "Zookeeper":     {"port": 2181,  "role": "Coordination Kafka"},
+        "Kafka":         {"port": 9092,  "role": "Message Broker"},
+        "MongoDB":       {"port": 27017, "role": "Document Store"},
+        "Elasticsearch": {"port": 9200,  "role": "Full-Text Search"},
+        "FastAPI":       {"port": 8000,  "role": "API REST"},
+        "Kafdrop":       {"port": 9000,  "role": "Kafka UI"},
+        "Grafana":       {"port": 3000,  "role": "Dashboards"},
+        "Streamlit":     {"port": 8501,  "role": "Ce dashboard"},
+    }
+    cols = st.columns(4)
+    for i, (name, info) in enumerate(services_info.items()):
+        is_up = services_status.get(name, False)
+        color = "#2ECC71" if is_up else "#E74C3C"
+        status_txt = "UP" if is_up else "DOWN"
+        with cols[i % 4]:
+            st.markdown(f"""
+            <div style="background:white;border-radius:10px;padding:16px;
+                        margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,0.08);
+                        border-top:3px solid {color};">
+                <div style="font-weight:600;margin-top:4px">{name}</div>
+                <div style="font-size:0.74rem;color:#7F8C8D">{info['role']}</div>
+                <div style="font-size:0.8rem;margin-top:6px">{status_txt}</div>
+                <div style="font-size:0.68rem;color:#BDC3C7">port {info['port']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.subheader("Liens Rapides")
+    lc1, lc2, lc3, lc4, lc5 = st.columns(5)
+    lc1.link_button("Grafana",       "http://localhost:3000", use_container_width=True)
+    lc2.link_button("Kafdrop",       "http://localhost:9000", use_container_width=True)
+    lc3.link_button("API Docs",      "http://localhost:8000/docs", use_container_width=True)
+    lc4.link_button("Elasticsearch", "http://localhost:9200", use_container_width=True)
+    lc5.link_button("Spark UI",      "http://localhost:4040", use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("Architecture du Pipeline")
+    st.markdown("""
+<style>
+.arch-wrapper { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 0 auto; padding: 8px 0; }
+.arch-layer {
+    border-radius: 14px; padding: 16px 20px; margin-bottom: 6px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.10);
+}
+.arch-layer-title {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; opacity: 0.75; margin-bottom: 10px;
+}
+.arch-layer-items { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.arch-item {
+    background: rgba(255,255,255,0.55); border-radius: 10px;
+    padding: 10px 16px; flex: 1; min-width: 160px; max-width: 220px;
+    text-align: center; border: 1px solid rgba(255,255,255,0.9);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.arch-item .name { font-weight: 700; font-size: 0.88rem; color: #1a1a2e; }
+.arch-item .desc { font-size: 0.72rem; color: #555; margin-top: 2px; }
+.arch-item .badge {
+    display: inline-block; background: rgba(0,0,0,0.10); border-radius: 4px;
+    padding: 1px 7px; font-size: 0.65rem; margin-top: 4px; font-weight: 600;
+}
+.arch-arrow {
+    text-align: center; font-size: 1.4rem; color: #95A5A6;
+    margin: 2px 0; line-height: 1.2;
+}
+.arch-arrow-label {
+    font-size: 0.68rem; color: #7F8C8D; margin-top: -2px; margin-bottom: 2px;
+}
+/* couleurs par couche */
+.layer-sources  { background: linear-gradient(135deg, #EBF5FB, #D6EAF8); border-left: 5px solid #2980B9; }
+.layer-kafka    { background: linear-gradient(135deg, #FDF2E9, #FAD7A0); border-left: 5px solid #E67E22; }
+.layer-spark    { background: linear-gradient(135deg, #E9F7EF, #A9DFBF); border-left: 5px solid #27AE60; }
+.layer-storage  { background: linear-gradient(135deg, #F4ECF7, #D7BDE2); border-left: 5px solid #8E44AD; }
+.layer-present  { background: linear-gradient(135deg, #FDEDEC, #FADBD8); border-left: 5px solid #E74C3C; }
+</style>
+
+<div class="arch-wrapper">
+
+  <!-- SOURCES -->
+  <div class="arch-layer layer-sources">
+    <div class="arch-layer-title">Sources de Données</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="name">RSS Feeds</div>
+        <div class="desc">AFP · BBC · Reuters<br>Al Jazeera · Jeune Afrique</div>
+        <span class="badge">scraping 60s</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">GDELT API</div>
+        <div class="desc">Articles géopolitiques<br>multilingues</div>
+        <span class="badge">temps réel</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch-arrow">↓</div>
+  <div class="arch-arrow-label" style="text-align:center">Kafka Producer</div>
+
+  <!-- KAFKA -->
+  <div class="arch-layer layer-kafka">
+    <div class="arch-layer-title">Apache Kafka — Confluent 7.6.0</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="name">raw-news-stream</div>
+        <div class="desc">Articles bruts entrants<br>(RSS + GDELT)</div>
+        <span class="badge">KAFKA_TOPIC_RAW</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">drift-alerts</div>
+        <div class="desc">Alertes de dérive<br>émises par Spark</div>
+        <span class="badge">KAFKA_TOPIC_DRIFT</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch-arrow">↓</div>
+  <div class="arch-arrow-label" style="text-align:center">Spark Structured Streaming</div>
+
+  <!-- SPARK -->
+  <div class="arch-layer layer-spark">
+    <div class="arch-layer-title">Spark Structured Streaming 3.5.6 — micro-batch 5 s</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="name">ONNX Inference</div>
+        <div class="desc">DistilBERT multilingue<br>quantifié INT8</div>
+        <span class="badge">~19 ms/article (mesuré)</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">Drift Detection</div>
+        <div class="desc">ADWIN + KSWIN<br>+ Page-Hinkley</div>
+        <span class="badge">score composite</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">Online Learning</div>
+        <div class="desc">Reservoir 5 000<br>PyTorch SGD</div>
+        <span class="badge">continual learning</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch-arrow">↓</div>
+  <div class="arch-arrow-label" style="text-align:center">Bulk write</div>
+
+  <!-- STOCKAGE -->
+  <div class="arch-layer layer-storage">
+    <div class="arch-layer-title">Stockage</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="name">MongoDB 7.0</div>
+        <div class="desc">Document store<br>Articles + événements drift</div>
+        <span class="badge">port 27017</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">Elasticsearch 8.14</div>
+        <div class="desc">Full-text search<br>Agrégations temps réel</div>
+        <span class="badge">port 9200</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arch-arrow">↓</div>
+  <div class="arch-arrow-label" style="text-align:center">Lecture via API / requêtes directes</div>
+
+  <!-- PRÉSENTATION -->
+  <div class="arch-layer layer-present">
+    <div class="arch-layer-title">Couche Présentation</div>
+    <div class="arch-layer-items">
+      <div class="arch-item">
+        <div class="name">FastAPI</div>
+        <div class="desc">API REST — docs Swagger</div>
+        <span class="badge">port 8000</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">Streamlit</div>
+        <div class="desc">Dashboard interactif</div>
+        <span class="badge">port 8501</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">Grafana</div>
+        <div class="desc">Métriques & alertes</div>
+        <span class="badge">port 3000</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">Kafdrop</div>
+        <div class="desc">Interface Kafka UI</div>
+        <span class="badge">port 9000</span>
+      </div>
+      <div class="arch-item">
+        <div class="name">Spark UI</div>
+        <div class="desc">Monitoring jobs<br>Spark Streaming</div>
+        <span class="badge">port 4040</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.subheader("Allocation Mémoire par conteneur (docker-compose.yml)")
+    _mem = {
+        "spark-app": 3584, "spark-worker-1": 1400, "spark-worker-2": 1400,
+        "kafka": 1024, "elasticsearch": 768, "api": 768, "spark-master": 512,
+        "mongodb": 512, "streamlit": 512, "zookeeper": 384, "grafana": 256,
+        "rss-producer": 256, "kafdrop": 192,
+    }
+    _RAM_MB = 14 * 1024
+    mem_df = pd.DataFrame(sorted(_mem.items(), key=lambda x: -x[1]),
+                          columns=["Service", "Limite (MiB)"])
+    fig_mem = px.bar(mem_df, x="Service", y="Limite (MiB)",
+                     color="Service", text="Limite (MiB)",
+                     color_discrete_sequence=px.colors.qualitative.Set3, height=300)
+    fig_mem.update_layout(showlegend=False, margin=dict(t=5, b=5), xaxis_tickangle=-35)
+    fig_mem.add_hline(y=_RAM_MB, line_dash="dash", line_color="red",
+                      annotation_text=f"RAM totale ≈ {_RAM_MB // 1024} Go")
+    fig_mem.add_hline(y=sum(_mem.values()), line_dash="dot", line_color="orange",
+                      annotation_text=f"Total alloué ≈ {sum(_mem.values())/1024:.1f} Go")
+    st.plotly_chart(fig_mem, use_container_width=True)
+    st.caption(f"Somme des limites : {sum(_mem.values()):,} MiB ≈ {sum(_mem.values())/1024:.1f} Go "
+               f"sur une machine à {_RAM_MB // 1024} Go. Ne pas lancer la stack complète en même "
+               f"temps qu'un entraînement GPU (cause probable de l'incident du 26/08/2026)."
+               .replace(",", " "))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 7 — À PROPOS
+# ═════════════════════════════════════════════════════════════════════════════
+elif "propos" in page:
+    section_header("À Propos du Projet")
+
+    col_info, col_meta = st.columns([2, 1])
+
+    with col_info:
+        st.markdown("""
+        ## Pipeline Big Data de Monitoring de la Désinformation en Temps Réel
+        ### Version 2.0 — Afrique subsaharienne & déploiement mondial
+
+        Ce projet constitue le mémoire de fin d'études du **Master BIG DATA IA**
+        à l'**Université Catholique de l'Afrique de l'Ouest — Unité Universitaire
+        du Togo (UCAO UUT)**, année 2025-2026.
+
+        > **Contexte africain** : le pipeline est conçu et validé pour la surveillance
+        > de la désinformation en Afrique subsaharienne (sources AFP Afrique, RFI, Jeune Afrique,
+        > Al Jazeera, France24, VOA Afrique…) mais son architecture est universelle et
+        > peut être déployée sur tout autre continent.
+
+        ### Objectifs
+
+        1. **Collecte en temps réel** d'articles via RSS (12 sources) et l'API GDELT
+        2. **Classification automatique** fake/réel par Continual-DistilBERT ONNX INT8
+        3. **Détection de concept drift** pour adapter le modèle aux nouvelles formes de désinformation
+        4. **Apprentissage continu équilibré** — reservoir 50/50 fake/réel (évite l'oubli + le biais)
+        5. **Visualisation temps réel** via ce dashboard, Grafana (métriques), API REST et Spark UI
+
+        ### Innovations Techniques (v2.0)
+
+        - **Reservoir équilibré par classe** : 2 500 fake + 2 500 réels → résiste aux injections massives de drift
+        - **Entraînement équilibré 50/50** : WeightedRandomSampler garantit des mini-batchs équilibrés
+        - **Dataset balancé** : sous-échantillonnage vers 50 % fake / 50 % réel (split 60/20/20)
+        - **Tri-détecteur hybride** : ADWIN(0.45) + KSWIN(0.35) + PageHinkley(0.20), seuil d'alerte 0.4
+        - **Inférence ONNX INT8 quantifiée** : latence mesurée ~19 ms/article (CPU dev)
+        - **Interface Spark UI** : monitoring des jobs en temps réel (port 4040)
+        - **Architecture 13 services Docker** : entièrement conteneurisée et reproductible
+
+        ### Stack Technologique
+        """)
+
+        tech = {
+            "Composant":  ["Apache Kafka", "Apache Spark", "DistilBERT", "ONNX Runtime",
+                           "River", "MongoDB", "Elasticsearch", "FastAPI", "Streamlit",
+                           "Grafana", "Docker"],
+            "Version":    ["Confluent 7.6.0", "3.5.6 (bitnamilegacy)", "multilingual-cased",
+                           "INT8", "0.21.2", "7.0", "8.14.0", "2.1.0", "1.38+",
+                           "10.4.0", "Compose v2"],
+            "Rôle":       ["Message Broker", "Streaming Engine", "Modèle NLP",
+                           "Inférence rapide", "Concept Drift", "Document Store",
+                           "Full-Text Search", "API REST", "Dashboard interactif",
+                           "Métriques & alertes", "Orchestration"],
+        }
+        st.dataframe(pd.DataFrame(tech), use_container_width=True, hide_index=True)
+
+        st.markdown("### Interfaces Accessibles")
+        ports_data = {
+            "Interface":  ["Streamlit Dashboard", "FastAPI Swagger", "Grafana",
+                           "Kafdrop (Kafka UI)", "Elasticsearch REST", "Spark UI"],
+            "Port":       [":8501", ":8000/docs", ":3000",
+                           ":9000", ":9200", ":4040"],
+            "Description":["Interface principale (7 pages)", "Documentation API interactive",
+                           "Métriques & alertes temps réel", "Monitoring des topics Kafka",
+                           "Recherche & indexation", "Monitoring jobs Spark Streaming"],
+        }
+        st.dataframe(pd.DataFrame(ports_data), use_container_width=True, hide_index=True)
+
+    with col_meta:
+        st.markdown("### Auteur")
+        st.markdown("""
+        **KOMOSSI Sosso**
+        Master BIG DATA IA
+        Institut ESI — UCAO UUT
+        Lomé, Togo · 2025-2026
+
+        ---
+        **Encadrants :**
+        M. TCHANTCHO Leri
+        M. BABA Kpatcha
+        (Maître de stage : M. TCHANTCHO Leri,
+        SERVICES MEKANO)
+        """)
+
+        st.markdown("### Performances du Modèle (vérifiées 27-28/08/2026)")
+        perf = {
+            "Métrique": ["F1-macro (test)", "AUC-ROC (test)", "Average Precision",
+                         "Précision / Rappel", "F1 WELFake / FakeNewsNet / LIAR",
+                         "Latence ONNX INT8", "Meilleure époque"],
+            "Valeur":   ["93,70 %", "98,99 %", "99,00 %",
+                         "93,87 % / 93,51 %", "0,976 / 0,974 / 0,598",
+                         "19,16 ms/article (mesurée)", "3 / 10 (early stopping p=2)"]
+        }
+        st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
+        st.caption("Matrice de confusion (test, 15 554 ex.) : TP 7272 · TN 7302 · FP 475 · FN 505. "
+                   "Détail : reports/RAPPORT_ANALYSE.md")
+
+        st.markdown("### Corpus d'entraînement")
+        st.markdown("""
+        **Datasets agrégés (bruts) :**
+        - ISOT — 44 898
+        - WELFake — 72 134
+        - FakeNewsNet — 23 196 (index ; ~13 350 avec texte exploitable)
+        - LIAR — 12 836
+        - Sous-corpus africain — 21 623
+          (MasakhaNEWS, 12 langues + Google News RSS)
+
+        **≈ 174 687 agrégés → 77 768 uniques**
+        après déduplication stricte sur le titre
+        (96 291 doublons retirés : recouvrement
+        connu ISOT ⊂ WELFake + FakeNewsNet sans corps).
+
+        Équilibrage strict 50/50 puis split
+        **46 660 train / 15 554 val / 15 554 test**.
+        Sur-pondération ×5 des exemples africains
+        (WeightedRandomSampler).
+        """)
+
+        st.markdown("### Ressources Machine")
+        st.markdown("""
+        - RAM : 14 Go
+        - GPU : NVIDIA T600, 4 Go VRAM
+        - Entraînement : batch 24, AMP,
+          padding dynamique, ~61 min/époque
+        - Python : 3.14 (dev) / 3.12 (conteneurs)
+        """)
+
+    st.markdown("---")
+    st.subheader("Endpoints API REST")
+    endpoints = [
+        ("GET", "/health",                       "Santé MongoDB + Elasticsearch"),
+        ("GET", "/api/v1/stats",                 "Statistiques globales (dégrade proprement si Mongo down)"),
+        ("GET", "/api/v1/articles/recent",       "Derniers articles classifiés"),
+        ("GET", "/api/v1/articles/search?q=...", "Recherche full-text Elasticsearch"),
+        ("GET", "/api/v1/articles/virality",     "Tendance horaire du taux de fake"),
+        ("GET", "/api/v1/drift/events",          "Historique des évènements de drift"),
+        ("GET", "/api/v1/drift/stats",           "Statistiques agrégées de drift"),
+        ("POST","/api/v1/drift/inject",          "Injection d'un scénario de dérive (A/B/C/D)"),
+        ("POST","/api/v1/drift/recover",         "Récupération post-dérive (articles réels)"),
+        ("GET", "/api/v1/search/web?q=...",      "Recherche internet + classification ONNX en direct"),
+    ]
+    st.dataframe(pd.DataFrame(endpoints, columns=["Méthode","Endpoint","Description"]),
+                 use_container_width=True, hide_index=True,
+                 column_config={"Méthode": st.column_config.TextColumn(width="small")})

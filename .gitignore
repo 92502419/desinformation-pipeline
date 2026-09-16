@@ -36,6 +36,9 @@ logs/*.log
 spark-app/src/__pycache__/
 producer/src/__pycache__/
 
+# ── Caches d'inférence régénérables (scripts/calibrate_model.py) ──
+reports/cache/
+
 # ── Fichiers temporaires OS / éditeurs ───────────────────────────
 *.tmp
 .DS_Store

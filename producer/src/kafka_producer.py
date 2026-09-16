@@ -1,6 +1,6 @@
 # producer/src/kafka_producer.py — Producteur Kafka complet
 import asyncio, feedparser, json, hashlib, logging, os, time
-from datetime import datetime
+from datetime import datetime, timezone
 from confluent_kafka import Producer
 from gdelt_client import fetch_gdelt_articles
 from rss_sources import ALL_SOURCES
@@ -75,7 +75,7 @@ async def scrape_rss():
                     'source': src['name'],
                     'source_category': src.get('category','reliable'),
                     'language': src.get('lang', 'en'),
-                    'timestamp': datetime.utcnow().isoformat(),
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
                     'gdelt_tone': 0.0,
                 }
                 total += send_article(article)

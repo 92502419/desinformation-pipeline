@@ -1,0 +1,411 @@
+{
+  "id": null,
+  "uid": "pipeline-desinformation",
+  "title": "Pipeline Désinformation — Temps réel",
+  "tags": [
+    "desinformation",
+    "kafka",
+    "spark",
+    "concept-drift"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "10s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "P1 — Taux de Fake (%)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-articles"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.4
+              },
+              {
+                "color": "red",
+                "value": 0.7
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "query": "*",
+          "metrics": [
+            {
+              "type": "avg",
+              "field": "is_fake",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "processed_at"
+        }
+      ],
+      "description": "Moyenne de is_fake (0/1) sur la fenêtre sélectionnée, réduite en une valeur (calc « mean ») et rendue en pourcentage (unité percentunit : 0,132 s'affiche 13,2 %). Seuils alignés sur le dashboard Streamlit : avertissement 40 %, critique 70 %."
+    },
+    {
+      "id": 2,
+      "title": "P2 — Flux d'articles par minute (réel vs fake)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 0
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-articles"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "query": "is_fake:0",
+          "alias": "Réel",
+          "metrics": [
+            {
+              "type": "count",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "1m"
+              }
+            }
+          ],
+          "timeField": "processed_at"
+        },
+        {
+          "query": "is_fake:1",
+          "alias": "Fake",
+          "metrics": [
+            {
+              "type": "count",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "1m"
+              }
+            }
+          ],
+          "timeField": "processed_at"
+        }
+      ],
+      "description": "Volume d'articles ingérés par minute, ventilé par label — correspond au panneau P2."
+    },
+    {
+      "id": 3,
+      "title": "P3 — Score composite de drift",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-articles"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.4
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "query": "*",
+          "metrics": [
+            {
+              "type": "avg",
+              "field": "drift_score",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "30s"
+              }
+            }
+          ],
+          "timeField": "processed_at"
+        }
+      ],
+      "description": "Score composite ADWIN(0.45)+KSWIN(0.35)+PageHinkley(0.20), moyenné par fenêtre de 30s — correspond au panneau P3, point clé de la démo (Acte 4)."
+    },
+    {
+      "id": 4,
+      "title": "P4 — Événements de Concept Drift confirmés",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-drift-events"
+      },
+      "targets": [
+        {
+          "query": "drift_confirmed:true",
+          "metrics": [
+            {
+              "type": "raw_data",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [],
+          "timeField": "timestamp"
+        }
+      ],
+      "description": "Liste des évènements où le score composite a franchi le seuil de confirmation (0.8) — index drift-events."
+    },
+    {
+      "id": 5,
+      "title": "P5 — Learning rate de l'apprentissage continu",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-drift-events"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "scientific"
+        }
+      },
+      "targets": [
+        {
+          "query": "*",
+          "metrics": [
+            {
+              "type": "avg",
+              "field": "recommended_lr",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "1m"
+              }
+            }
+          ],
+          "timeField": "timestamp"
+        }
+      ],
+      "description": "Passage automatique de 1e-5 (régime stable) à 5e-5 (régime de dérive) — index drift-events. Correspond au panneau P5."
+    },
+    {
+      "id": 6,
+      "title": "P6 — Confiance moyenne du modèle",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 16
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-articles"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 1
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "query": "*",
+          "metrics": [
+            {
+              "type": "avg",
+              "field": "confidence",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "processed_at"
+        }
+      ],
+      "description": "Confiance moyenne du modèle sur les articles récents (calc « mean » sur les buckets). NB : la latence d'inférence réelle (ONNX, ~19 ms/article mesurés) n'est pas journalisée par article — voir reports/metrics_summary.json."
+    },
+    {
+      "id": 7,
+      "title": "P7 — Total articles traités",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 16
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-articles"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "query": "*",
+          "metrics": [
+            {
+              "type": "count",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "processed_at"
+        }
+      ],
+      "description": "Nombre total d'articles traités sur la fenêtre de temps sélectionnée (somme des comptages par bucket). Remplace le 'F1-Score Prequential' de la doc d'origine, qui nécessiterait un label de vérité terrain continu sur le flux de production (indisponible)."
+    }
+  ]
+}

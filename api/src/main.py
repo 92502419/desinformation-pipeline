@@ -1,5 +1,5 @@
 # api/src/main.py — API REST FastAPI — Pipeline Désinformation
-# KOMOSSI Sosso — Master 2 IBDIA, UCAO-UUT 2025-2026
+# KOMOSSI Sosso — Master BIG DATA IA, Institut ESI — UCAO-UUT, 2025-2026
 import os, sys
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from routers.articles   import router as articles_router
 from routers.drift      import router as drift_router
 from routers.web_search import router as web_search_router
+from calibration        import ProbabilityCalibrator
 
 load_dotenv()
 
@@ -20,11 +21,14 @@ app = FastAPI(
     title='Disinformation Monitor API',
     description=(
         'API temps réel pour le monitoring de la désinformation — '
-        'KOMOSSI Sosso, Master 2 IBDIA, UCAO-UUT 2025-2026.\n\n'
+        'KOMOSSI Sosso, Master BIG DATA IA, Institut ESI — UCAO-UUT, 2025-2026.\n\n'
         '**Nouveau v2.0** : `/api/v1/search/web` — recherche internet + '
-        'classification fake/réel en temps réel via le pipeline ML.'
+        'classification fake/réel en temps réel via le pipeline ML.\n\n'
+        '**Nouveau v2.2** : `/api/v1/model/calibration` — température, seuils et '
+        'métriques de la calibration probabiliste (prédiction sélective, verdict '
+        '`uncertain`).'
     ),
-    version='2.1.0',
+    version='2.2.0',
     docs_url='/docs',
     redoc_url='/redoc',
 )
@@ -103,3 +107,15 @@ def get_stats():
         'status':            'ok',
         'timestamp':         datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ── ENDPOINT : calibration probabiliste du modèle ───────────────────
+@app.get('/api/v1/model/calibration', tags=['stats'])
+def get_calibration():
+    """État de la calibration (température, seuils, ECE/Brier avant/après).
+
+    Charge models/calibration.json produit par scripts/calibrate_model.py.
+    En son absence, retourne l'état de repli (T=1, seuil 0,75, non calibré) —
+    même comportement que le classifieur en production.
+    """
+    return ProbabilityCalibrator.load().describe()

@@ -3,8 +3,8 @@
 # Usage (racine du projet, venv_main activé) : python scripts/download_african_datasets.py
 #
 # Construit data/raw/africa_news/africa_news.csv à partir de :
-#   - MasakhaNEWS (HuggingFace `masakhane/masakhanews`) : 2 742 articles réels
-#     couvrant 11 langues africaines (amh, hau, ibo, lin, orm, pcm, run, sna, som, swa, tir, yor)
+#   - MasakhaNEWS (HuggingFace `masakhane/masakhanews`) : ~21 400 articles réels
+#     couvrant 12 langues africaines (amh, hau, ibo, lin, orm, pcm, run, sna, som, swa, tir, yor)
 #     -> tous labellisés réels (label=0), ce sont des dépêches de presse vérifiées.
 #   - Un petit lot d'articles complémentaires récents via Google News RSS
 #     (sources africaines) pour diversifier titres/domaines récents.

@@ -1,6 +1,7 @@
 apiVersion: 1
 datasources:
-  - name: Elasticsearch-Disinfo
+  - name: Elasticsearch-Articles
+    uid: es-articles
     type: elasticsearch
     access: proxy
     url: http://elasticsearch:9200
@@ -9,7 +10,17 @@ datasources:
       esVersion: "8.14.0"
       timeField: processed_at
     isDefault: true
+  - name: Elasticsearch-DriftEvents
+    uid: es-drift-events
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    database: "drift-events*"
+    jsonData:
+      esVersion: "8.14.0"
+      timeField: timestamp
   - name: MongoDB-Disinfo
+    uid: mongo-disinfo
     type: grafana-mongodb-datasource
     access: proxy
     url: mongodb://mongodb:27017

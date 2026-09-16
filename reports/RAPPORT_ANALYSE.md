@@ -11,7 +11,7 @@ Généré automatiquement par `scripts/generate_reports.py` le 2026-08-28.
 - **Matrice de confusion (test)** : TP=7272, TN=7302, FP=475, FN=505
 - **Nombre d'exemples de test** : 15554
 
-> ⚠️ Ces chiffres sont ceux, et uniquement ceux, obtenus par le ré-entraînement réel du 27-28/08/2026 sur cette machine. Voir README.md, section "Incident du 26/08/2026 et reprise", avant de les comparer à ceux déjà rédigés dans le mémoire v7.
+>Ces chiffres sont ceux, et uniquement ceux, obtenus par le ré-entraînement réel du 27-28/08/2026 sur cette machine. Voir README.md, section "Incident du 26/08/2026 et reprise", avant de les comparer à ceux déjà rédigés dans le mémoire v7.
 
 ## Figures et interprétations
 
@@ -43,7 +43,7 @@ Average Precision = 0.9900. Complémentaire à la ROC, cette courbe est plus inf
 
 ![Répartition des classes et composition du corpus](figures/05_repartition_corpus.png)
 
-Le corpus d'entraînement est strictement équilibré 50/50 par sous-échantillonnage (voir `scripts/preprocess_data.py`), ce qui évite le biais de classe documenté dans le mémoire (le corpus brut était à ~58,7 % fake). WELFake domine la composition (26728 exemples), suivi de FakeNewsNet et LIAR ; le sous-corpus africain multilingue (MasakhaNEWS + RSS, 11 langues) apporte une diversité linguistique absente des 3 autres datasets, renforcée par le sur-échantillonnage `--africa_boost=5` pendant l'entraînement.
+Le corpus d'entraînement est strictement équilibré 50/50 par sous-échantillonnage (voir `scripts/preprocess_data.py`), ce qui évite le biais de classe documenté dans le mémoire (le corpus brut était à ~58,7 % fake). WELFake domine la composition (26728 exemples), suivi de FakeNewsNet et LIAR ; le sous-corpus africain multilingue (MasakhaNEWS + RSS, 12 langues) apporte une diversité linguistique absente des 3 autres datasets, renforcée par le sur-échantillonnage `--africa_boost=5` pendant l'entraînement.
 
 ### Performance par source de données (jeu de test)
 
@@ -55,7 +55,7 @@ Seules 3 source(s) contiennent les deux classes dans le jeu de test et permetten
 
 ![Matrice de corrélation (features dérivées)](figures/07_matrice_correlation.png)
 
-Corrélation label ↔ probabilité prédite = 0.89 : forte cohérence entre les prédictions du modèle et la vérité terrain, cohérent avec l'AUC observée. Corrélation longueur du titre ↔ label = 0.20 : les titres fake ont tendance à être plus longs/accrocheurs — une corrélation longueur/label proche de 0 est plutôt rassurante : elle indique que le modèle doit apprendre du contenu sémantique, pas d'un artefact de longueur de texte.
+Corrélation label / probabilité prédite = 0.89 : forte cohérence entre les prédictions du modèle et la vérité terrain, cohérent avec l'AUC observée. Corrélation longueur du titre / label = 0.20 : les titres fake ont tendance à être plus longs/accrocheurs — une corrélation longueur/label proche de 0 est plutôt rassurante : elle indique que le modèle doit apprendre du contenu sémantique, pas d'un artefact de longueur de texte.
 
 ### Distribution de la confiance du modèle
 

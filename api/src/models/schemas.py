@@ -15,8 +15,10 @@ class ArticleOut(BaseModel):
     timestamp: Optional[str] = None
     processed_at: Optional[str] = None
     is_fake: int                     # 0 = réel, 1 = fake
+    verdict: Optional[str] = None    # fake / real / uncertain (prédiction sélective)
     confidence: float
     p_fake: float
+    p_fake_raw: Optional[float] = None  # probabilité avant calibration (temperature scaling)
     gdelt_tone: Optional[float] = 0.0
     drift_score: Optional[float] = 0.0
     drift_active: Optional[bool] = False
