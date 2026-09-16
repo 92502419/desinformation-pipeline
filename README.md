@@ -1,7 +1,7 @@
 # Pipeline Big Data de Monitoring de la Désinformation en Temps Réel
 
 **Auteur :** KOMOSSI Sosso — Master BIG DATA IA, Institut ESI — UCAO UUT, 2025-2026
-**Encadrants :** M. TCHANTCHO Leri, M. BABA Kpatcha
+**Encadrants :** Dr Nadjime PINDRA (Directeur de Mémoire), Dr Kodjo Sena Messa APEKE (Co-Directeur)
 
 Pipeline temps réel de détection de désinformation : ingestion Kafka (RSS + GDELT),
 traitement en streaming Spark, classification par un modèle Transformer multilingue en
