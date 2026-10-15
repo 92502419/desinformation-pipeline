@@ -202,7 +202,7 @@ services:
   # GRAFANA
   # ════════════════════════════════════════════════════════
   grafana:
-    image: grafana/grafana:10.4.0
+    image: grafana/grafana:10.4.19   # 10.4.0 -> 10.4.19 (correctif, même branche) : requis par le plugin Infinity 3.7.1
     container_name: grafana
     restart: unless-stopped
     depends_on: [elasticsearch, mongodb]
@@ -214,9 +214,19 @@ services:
       # grafana-elasticsearch-datasource retiré : Elasticsearch est un datasource
       # cœur de Grafana (aucun plugin requis) ; ce nom renvoyait un 404 et bloquait
       # le démarrage du conteneur en boucle de redémarrage.
-      GF_INSTALL_PLUGINS: grafana-mongodb-datasource
+      GF_INSTALL_PLUGINS: grafana-mongodb-datasource,yesoreyeram-infinity-datasource 3.7.1   # Infinity : lit /api/v1/stats (mêmes KPI que Streamlit)
       GF_USERS_ALLOW_SIGN_UP: 'false'
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: grafana-mongodb-datasource
+      # Alertes par e-mail (provisioning/alerting/contactpoints.yml) — renseigner .env
+      GF_SMTP_ENABLED: ${GRAFANA_SMTP_ENABLED:-false}
+      GF_SMTP_HOST: ${GRAFANA_SMTP_HOST:-smtp.gmail.com:587}
+      GF_SMTP_USER: ${GRAFANA_SMTP_USER:-}
+      GF_SMTP_PASSWORD: ${GRAFANA_SMTP_PASSWORD:-}
+      GF_SMTP_FROM_ADDRESS: ${GRAFANA_SMTP_FROM:-admin@grafana.localhost}   # Gmail : identique à GRAFANA_SMTP_USER
+      GF_SMTP_FROM_NAME: Pipeline Désinformation — Grafana
+      GF_SMTP_STARTTLS_POLICY: MandatoryStartTLS
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}   # liens cliquables dans les e-mails
+      GRAFANA_ALERT_EMAIL: ${GRAFANA_ALERT_EMAIL:-alertes@example.invalid}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./config/grafana/provisioning:/etc/grafana/provisioning

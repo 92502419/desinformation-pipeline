@@ -502,7 +502,7 @@ with st.sidebar:
 
     st.markdown("<hr style='border-color:rgba(255,255,255,0.2); margin:16px 0 10px 0;'>", unsafe_allow_html=True)
 
-    auto_refresh = st.toggle("Rafraîchissement auto", value=False)
+    auto_refresh = st.toggle("Rafraîchissement auto", value=True)   # comme Grafana (10 s) : les KPI suivent le flux sans clic
     if auto_refresh:
         refresh_interval = st.slider("Intervalle (s)", 10, 120, REFRESH_SEC)
 
@@ -589,12 +589,27 @@ if "Tableau de bord" in page:
     last_h   = stats.get("articles_last_hour", 0)
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    with c1: kpi_card("Articles analysés",   f"{total:,}",     "info")
+    with c1: kpi_card("Articles analysés (flux réel)", f"{total:,}", "info")
     with c2: kpi_card("Faux détectés",        f"{fakes:,}",     "fake")
     with c3: kpi_card("Vrais détectés",       f"{reals:,}",     "real")
-    with c4: kpi_card("Taux de fake",         f"{fake_pct:.1f}", "fake" if fake_pct > 50 else "info", "%")
+    with c4: kpi_card(f"Taux de fake ({stats.get('fake_rate_window', 100)} derniers)",
+                      f"{fake_pct:.1f}", "fake" if fake_pct > 50 else "info", "%")
     with c5: kpi_card("Alertes drift",        f"{drifts}",      "drift")
     with c6: kpi_card("Articles (1h)",        f"{last_h}",      "info")
+
+    # Taux réel / fake sur trois horizons : les deux premiers varient en continu
+    # avec le flux RSS scrapé en temps réel ; le cumul (flux réel, simulations
+    # exclues) bouge plus lentement. Les articles de simulation sont comptés à part.
+    win = stats.get("fake_rate_window", 100)
+    r1, r2, r3, r4 = st.columns(4)
+    with r1: kpi_card(f"Réel / Fake ({win} derniers)",
+                      f"{stats.get('real_rate', 0):.1f} / {fake_pct:.1f}", "real", "%")
+    with r2: kpi_card(f"Réel / Fake (24 h — {stats.get('articles_24h', 0)} art.)",
+                      f"{stats.get('real_rate_24h', 0):.1f} / {stats.get('fake_rate_24h', 0):.1f}", "real", "%")
+    with r3: kpi_card("Réel / Fake (cumul flux réel)",
+                      f"{stats.get('real_rate_global', 0):.1f} / {stats.get('fake_rate_global', 0):.1f}", "real", "%")
+    with r4: kpi_card("Articles de simulation (exclus)",
+                      f"{stats.get('simulation_articles', 0):,}", "drift")
 
     st.markdown("---")
 
@@ -602,20 +617,38 @@ if "Tableau de bord" in page:
 
     with col_l:
         st.subheader("Répartition Fake / Réel")
-        if total > 0:
+        # Trois horizons, comme la ligne de KPI : « 100 derniers » (défaut) suit le flux
+        # en direct, simulations comprises — il bouge pendant un drift, comme la jauge P1
+        # de Grafana ; « cumul flux réel » exclut les simulations et ne varie que lentement.
+        win = stats.get("fake_rate_window", 100)
+        horizon = st.radio("Horizon", [f"{win} derniers articles", "24 h (flux réel)", "Cumul (flux réel)"],
+                           horizontal=True, label_visibility="collapsed", key="pie_horizon")
+        if horizon.startswith("24 h"):
+            n = stats.get("articles_24h", 0)
+            p_fake = stats.get("fake_rate_24h", 0.0)
+        elif horizon.startswith("Cumul"):
+            n = total
+            p_fake = fakes / total * 100 if total else 0.0
+        else:
+            n = stats.get("fake_rate_window", 0)
+            p_fake = fake_pct
+        n_fake = round(n * p_fake / 100)
+        if n > 0:
             fig = go.Figure(data=[go.Pie(
                 labels=["Fake", "Réel"],
-                values=[fakes, reals],
+                values=[n_fake, n - n_fake],
                 hole=0.55,
                 marker_colors=[CLR_FAKE, CLR_REAL],
                 textfont_size=13,
+                sort=False,
+                textinfo="none" if n_fake in (0, n) else "percent",   # pas d'étiquette « 0% » flottante
                 hovertemplate="<b>%{label}</b><br>%{value} articles (%{percent})<extra></extra>"
             )])
             fig.update_layout(
                 showlegend=True, height=290,
                 margin=dict(t=10, b=10, l=10, r=10),
                 legend=dict(orientation="h", y=-0.12),
-                annotations=[dict(text=f"<b>{fake_pct:.1f}%</b><br>Fake",
+                annotations=[dict(text=f"<b>{p_fake:.1f}%</b><br>Fake · {n:,} art.",
                                   x=0.5, y=0.5, font_size=15, showarrow=False)]
             )
             st.plotly_chart(fig, use_container_width=True)
@@ -1383,7 +1416,7 @@ La simulation ne modifie <b>pas</b> les analyses de recherche web — elle sert 
             "Scénario",
             list(scenario_labels.keys()),
             index=0,
-            help="B=50%→90% progressif | A=bloc abrupt | C=pics répétés | D=montée lente"
+            help="A=200 fake d'un coup | B=fake de 0 % à 100 % sur 200 articles | C=4 rafales fake/réel alternées | D=10 paliers de +10 %"
         )
         with_recovery_toggle = st.checkbox(
             "Récupération automatique après le drift (recommandé)",
@@ -1452,10 +1485,11 @@ La simulation ne modifie <b>pas</b> les analyses de recherche web — elle sert 
     st.markdown("""
     <div style="background:#F8F9FA;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.85rem;">
     <b>Description des scénarios :</b><br>
-<b>B — Graduel</b> : taux fake monte de 50% → 90% sur 120 articles (~5 min) + récupération → scénario recommandé pour la soutenance<br>
-<b>A — Abrupt</b> : 30 articles normaux puis bloc de 80 articles à 90% fake — ADWIN détecte en &lt; 10 messages<br>
-<b>C — Cyclique</b> : 3 pics fake/réel alternés — simule une campagne récurrente de désinformation<br>
-<b>D — Incrémental</b> : montée très lente 30% → 90% sur 200 articles — KSWIN excelle sur ce scénario<br><br>
+<b>B — Graduel</b> : 200 articles, la part de fake monte de 0 % à 100 % (~20 s d'envoi) — scénario recommandé pour la soutenance<br>
+<b>A — Abrupt</b> : rafale de 200 articles fake envoyés d'un coup — détectée dès le premier micro-batch<br>
+<b>C — Cyclique</b> : 4 rafales de 50 articles alternant fake et réel — simule une campagne récurrente<br>
+<b>D — Incrémental</b> : 10 paliers de 20 articles, +10 % de fake à chaque palier — le cas le plus difficile à détecter<br>
+Après la fenêtre de visualisation, la <b>récupération</b> rejoue 100 articles réels fiables déjà vus par le pipeline.<br><br>
     <b>Cycle complet :</b> Simulation drift → Détection tri-hybride → Alerte → Récupération → Retour à la normale
     </div>
     """, unsafe_allow_html=True)
@@ -1881,15 +1915,16 @@ elif "propos" in page:
         4. **Apprentissage continu équilibré** — reservoir 50/50 fake/réel (évite l'oubli + le biais)
         5. **Visualisation temps réel** via ce dashboard, Grafana (métriques), API REST et Spark UI
 
-        ### Innovations Techniques (v2.0)
+        ### Innovations Techniques (v2.0 → v2.5)
 
         - **Reservoir équilibré par classe** : 2 500 fake + 2 500 réels → résiste aux injections massives de drift
         - **Entraînement équilibré 50/50** : WeightedRandomSampler garantit des mini-batchs équilibrés
         - **Dataset balancé** : sous-échantillonnage vers 50 % fake / 50 % réel (split 60/20/20)
-        - **Tri-détecteur hybride** : ADWIN(0.45) + KSWIN(0.35) + PageHinkley(0.20), seuil d'alerte 0.4
+        - **Tri-détecteur hybride** : ADWIN(0.45) + KSWIN(0.35) + PageHinkley(0.20), seuil d'alerte 0.4, + canal EntropyADWIN (OU logique)
         - **Inférence ONNX INT8 quantifiée** : latence mesurée ~19 ms/article (CPU dev)
         - **Interface Spark UI** : monitoring des jobs en temps réel (port 4040)
         - **Architecture 13 services Docker** : entièrement conteneurisée et reproductible
+        - **v2.5** : récupération par articles réels, taux réel/fake sur 3 horizons, fin de dérive explicite, métriques d'apprentissage par micro-batch, apprentissage conservé au redémarrage, synchronisation MongoDB → Elasticsearch et indicateurs identiques dans Grafana, alertes par e-mail
 
         ### Stack Technologique
         """)
@@ -1898,9 +1933,9 @@ elif "propos" in page:
             "Composant":  ["Apache Kafka", "Apache Spark", "DistilBERT", "ONNX Runtime",
                            "River", "MongoDB", "Elasticsearch", "FastAPI", "Streamlit",
                            "Grafana", "Docker"],
-            "Version":    ["Confluent 7.6.0", "3.5.6 (bitnamilegacy)", "multilingual-cased",
-                           "INT8", "0.21.2", "7.0", "8.14.0", "2.1.0", "1.38+",
-                           "10.4.0", "Compose v2"],
+            "Version":    ["Confluent 7.6.0", "PySpark 3.5.3 (local[2])", "multilingual-cased",
+                           "1.19 (INT8)", "0.21.2", "7.0", "8.14.0", "0.113 (API v2.5)", "1.38+",
+                           "10.4.19", "Compose v2"],
             "Rôle":       ["Message Broker", "Streaming Engine", "Modèle NLP",
                            "Inférence rapide", "Concept Drift", "Document Store",
                            "Full-Text Search", "API REST", "Dashboard interactif",

@@ -60,11 +60,51 @@ def _send(producer: Producer, topic: str, msg: dict):
     producer.produce(topic, key=msg['id'], value=json.dumps(msg, ensure_ascii=False).encode('utf-8'))
 
 
-def run_recovery(producer: Producer, topic: str = 'raw-news-stream', n_articles: int = 100):
-    """Envoie des articles réels pour ramener le modèle et les statistiques à la normale."""
-    print(f'[recovery] Envoi de {n_articles} articles réels pour rééquilibrage...')
+def load_real_pool(mongo_uri: str = 'mongodb://localhost:27017', db_name: str = 'disinformation_db',
+                   limit: int = 500) -> list:
+    """Articles RÉELS déjà vus par le pipeline (sources fiables, classés réels avec
+    confiance >= 0,9, hors simulation) — base de la récupération.
+
+    v2.5 (2026-10-14) : les titres synthétiques REAL_TITLES_FR + corps « à des fins
+    de démonstration » étaient classés FAKE à 50-67 % par le modèle (p_fake moyen
+    0,67, mesuré sur 13 299 articles SimulationRecovery) : la « récupération »
+    faisait MONTER le taux de fake au lieu de le ramener à la normale. Les vrais
+    articles fiables, eux, sortent à 0 % fake (p_fake moyen 0,04).
+    """
+    try:
+        from pymongo import MongoClient
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=3000)
+        docs = list(client[db_name].articles.aggregate([
+            {'$match': {
+                'source_category': 'reliable', 'is_fake': 0, 'confidence': {'$gte': 0.9},
+                'id': {'$not': {'$regex': '^drift_sim'}},
+            }},
+            {'$sample': {'size': limit}},
+            {'$project': {'_id': 0, 'title': 1, 'body': 1, 'language': 1}},
+        ]))
+        return [d for d in docs if d.get('title')]
+    except Exception as e:
+        print(f'[recovery] Pool MongoDB indisponible ({e}) — repli sur les titres synthétiques')
+        return []
+
+
+def run_recovery(producer: Producer, topic: str = 'raw-news-stream', n_articles: int = 100,
+                 real_pool: list = None):
+    """Envoie des articles réels pour ramener le modèle et les statistiques à la normale.
+
+    `real_pool` : articles réels fiables (voir load_real_pool) rejoués avec un nouvel
+    id ; repli sur les titres synthétiques REAL_TITLES_FR s'il est vide.
+    """
+    print(f'[recovery] Envoi de {n_articles} articles réels pour rééquilibrage '
+          f'({"pool réel de " + str(len(real_pool)) + " articles" if real_pool else "titres synthétiques"})...')
     for i in range(n_articles):
-        msg = _make_msg(random.choice(REAL_TITLES_FR), 'SimulationRecovery', 'reliable', tone_range=(0.0, 3.0))
+        if real_pool:
+            src = random.choice(real_pool)
+            msg = _make_msg(src['title'], 'SimulationRecovery', 'reliable', tone_range=(0.0, 3.0))
+            msg['body'] = src.get('body') or ''
+            msg['language'] = src.get('language') or 'en'
+        else:
+            msg = _make_msg(random.choice(REAL_TITLES_FR), 'SimulationRecovery', 'reliable', tone_range=(0.0, 3.0))
         _send(producer, topic, msg)
         if i % 20 == 0:
             producer.flush()
@@ -74,11 +114,18 @@ def run_recovery(producer: Producer, topic: str = 'raw-news-stream', n_articles:
 
 def run_scenario(scenario: str, broker: str = 'localhost:9092', topic: str = 'raw-news-stream',
                   n: int = 200, rate: float = 0.1, with_recovery: bool = True,
-                  visualization_window: int = 300):
+                  visualization_window: int = 300, real_pool: list = None, on_phase=None):
     """Injecte un scénario de drift (A/B/C/D), attend `visualization_window` secondes
-    d'observation, puis lance automatiquement la récupération si `with_recovery`."""
+    d'observation, puis lance automatiquement la récupération si `with_recovery`.
+
+    `on_phase(phase, **info)` : rappel optionnel appelé à chaque changement de phase
+    (inject_start, inject_end, recovery_start, recovery_end) — l'API s'en sert pour
+    tracer les phases dans Elasticsearch (annotations Grafana).
+    """
+    on_phase = on_phase or (lambda phase, **info: None)
     producer = Producer({'bootstrap.servers': broker})
     scenario = scenario.upper()
+    on_phase('inject_start', scenario=scenario, n=n)
     print(f"Scénario {scenario} — injection vers {broker}/{topic}")
     print('Surveiller Grafana (localhost:3000) → Panneau Score Drift')
 
@@ -139,13 +186,16 @@ def run_scenario(scenario: str, broker: str = 'localhost:9092', topic: str = 'ra
     else:
         raise ValueError(f'Scénario inconnu : {scenario} (attendu : A, B, C ou D)')
 
+    on_phase('inject_end', scenario=scenario, n=n)
     print(f'Injection terminée. Fenêtre de visualisation : {visualization_window}s')
     print('Vérifier : curl http://localhost:8000/api/v1/drift/events')
 
     if with_recovery:
         print(f'Attente de {visualization_window}s avant récupération automatique...')
         time.sleep(visualization_window)
-        run_recovery(producer, topic, n_articles=100)
+        on_phase('recovery_start', scenario=scenario, n=100)
+        run_recovery(producer, topic, n_articles=100, real_pool=real_pool)
+        on_phase('recovery_end', scenario=scenario, n=100)
     else:
         print('Récupération automatique désactivée (with_recovery=False) — '
               'lancer manuellement : POST /api/v1/drift/recover')
@@ -161,7 +211,10 @@ if __name__ == '__main__':
     parser.add_argument('--with_recovery', action='store_true', default=True)
     parser.add_argument('--no-recovery', dest='with_recovery', action='store_false')
     parser.add_argument('--visualization_window', type=int, default=300)
+    parser.add_argument('--mongo_uri', default='mongodb://localhost:27017',
+                        help='Source des articles réels rejoués pendant la récupération')
     args = parser.parse_args()
 
     run_scenario(args.scenario, broker=args.broker, topic=args.topic, n=args.n, rate=args.rate,
-                 with_recovery=args.with_recovery, visualization_window=args.visualization_window)
+                 with_recovery=args.with_recovery, visualization_window=args.visualization_window,
+                 real_pool=load_real_pool(args.mongo_uri) if args.with_recovery else None)

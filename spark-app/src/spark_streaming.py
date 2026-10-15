@@ -111,6 +111,27 @@ es_client    = Elasticsearch(
 drift_producer = KafkaProducer({'bootstrap.servers': os.getenv('KAFKA_BROKER', 'kafka:29092')})
 
 
+def _iso_timestamp(value, default):
+    """Normalise la date de publication en ISO 8601.
+
+    La recherche web (Google News RSS) transmet des dates RFC 2822
+    (« Sat, 29 Oct 2022 07:00:00 GMT ») que le champ `timestamp` (type date)
+    d'Elasticsearch rejette : l'article était écrit dans MongoDB mais pas indexé,
+    d'où un écart entre Streamlit (MongoDB) et Grafana (Elasticsearch).
+    """
+    if not value:
+        return default
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).isoformat()
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(value).isoformat()
+    except (TypeError, ValueError):
+        return default
+
+
 # ── TRAITEMENT PAR BATCH ──────────────────────────────────
 def process_batch(batch_df, batch_id):
     t0 = time.time()
@@ -142,7 +163,7 @@ def process_batch(batch_df, batch_id):
             'source':          row.source or '',
             'source_category': row.source_category or 'unknown',
             'language':        row.language or 'en',
-            'timestamp':       row.timestamp or now_iso,
+            'timestamp':       _iso_timestamp(row.timestamp, now_iso),
             'processed_at':    now_iso,
             'is_fake':         pred['label'],
             'verdict':         pred['verdict'],
@@ -181,9 +202,23 @@ def process_batch(batch_df, batch_id):
         f'train={t_train_end-t_train_start:.1f}s'
     )
 
+    # 5b. Récupération : le lot contient des articles réels rejoués par
+    # POST /api/v1/drift/recover (ou la récupération automatique) → fin de dérive
+    # explicite, tracée dans drift-events (phase=recovery) pour Grafana.
+    n_recovery = sum(1 for r in rows if r.source == 'SimulationRecovery')
+    if n_recovery and drift_monitor.recover():
+        recovery_doc = {**drift_monitor.get_alert_payload(), 'phase': 'recovery',
+                        '_batch_id': batch_id}
+        log.warning(f'RÉCUPÉRATION : fin de dérive ({n_recovery} articles réels dans le lot)')
+        try:
+            db.drift_events.insert_one(dict(recovery_doc))
+            es_client.index(index='drift-events', document=recovery_doc)
+        except Exception as e:
+            log.warning(f'Erreur stockage événement de récupération : {e}')
+
     # 6. Émission d'une alerte + stockage si dérive détectée
     if drift_monitor.is_drift_active():
-        alert = drift_monitor.get_alert_payload()
+        alert = {**drift_monitor.get_alert_payload(), 'phase': 'drift'}
         drift_producer.produce(
             topic=os.getenv('KAFKA_TOPIC_DRIFT', 'drift-alerts'),
             value=json.dumps(alert).encode('utf-8')
@@ -222,9 +257,48 @@ def process_batch(batch_df, batch_id):
         try:
             ok, errors = bulk(es_client, es_docs, raise_on_error=False)
             if errors:
-                log.warning(f'Elasticsearch : {len(errors)} erreurs lors du bulk insert')
+                first = next(iter(errors[0].values()), {}).get('error', {})
+                log.warning(f'Elasticsearch : {len(errors)} erreurs lors du bulk insert '
+                            f'(1re : {first.get("reason", first)})')
         except Exception as e:
             log.error(f'Erreur Elasticsearch bulk : {e}')
+
+    # 9. Métriques d'apprentissage continu — un document par micro-batch, lu par
+    # les panneaux Grafana « Apprentissage continu » (le flux d'entraînement était
+    # invisible hors dérive : drift-events n'est écrit que pendant une dérive).
+    n_fake_batch = sum(d['is_fake'] for d in batch_docs)
+    metrics_doc = {
+        'timestamp':        now_iso,
+        'batch_id':         batch_id,
+        'articles':         len(batch_docs),
+        'articles_fake':    n_fake_batch,
+        'articles_real':    len(batch_docs) - n_fake_batch,
+        'articles_simulation_drift':    sum(1 for r in rows if r.source == 'SimulationDrift'),
+        'articles_simulation_recovery': n_recovery,
+        'fake_rate_batch':  n_fake_batch / len(batch_docs) if batch_docs else 0.0,
+        'p_fake_mean':      sum(d['p_fake'] for d in batch_docs) / len(batch_docs) if batch_docs else 0.0,
+        'confidence_mean':  sum(d['confidence'] for d in batch_docs) / len(batch_docs) if batch_docs else 0.0,
+        'train_examples_batch': len(batch_texts),
+        'train_examples_total': trainer.total_examples,
+        'trained':          train_metrics['loss'] > 0,
+        'online_loss':      train_metrics['loss'] if train_metrics['loss'] > 0 else None,
+        'learning_rate':    train_metrics['lr'],
+        'reservoir_fake':   len(nlp_model.reservoir_fake),
+        'reservoir_real':   len(nlp_model.reservoir_real),
+        'drift_score':      drift_monitor.composite_score,
+        'drift_active':     drift_monitor.is_drift_active(),
+        'drift_confirmed':  drift_monitor.drift_confirmed,
+        'messages_total':   drift_monitor.messages_total,
+        'latency_ms_per_article': (t_loop - t_collect) / len(rows) * 1000,
+        # Publication du modèle appris en ligne (checkpoint + ONNX servi à l'inférence)
+        'onnx_synced':      trainer.last_step_synced,
+        'onnx_syncs_total': trainer.onnx_syncs,
+        'batches_before_onnx_sync': -trainer.batch_count % int(os.getenv('SYNC_ONNX_EVERY', 100)),
+    }
+    try:
+        es_client.index(index='training-metrics', document=metrics_doc)
+    except Exception as e:
+        log.warning(f'Erreur indexation training-metrics : {e}')
 
 
 # ── LANCEMENT DU STREAMING ───────────────────────────────

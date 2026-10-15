@@ -1,6 +1,8 @@
 # api/src/routers/drift.py — Router Drift Events + Injection de simulation
 from fastapi import APIRouter, Query, BackgroundTasks
 from pymongo import MongoClient
+from elasticsearch import Elasticsearch
+from datetime import datetime, timezone
 import os, sys, logging
 
 log = logging.getLogger(__name__)
@@ -31,12 +33,31 @@ def get_drift_stats():
     }
 
 
+es = Elasticsearch(os.getenv('ES_HOST', 'http://elasticsearch:9200'), request_timeout=10)
+
+
 def _get_inj_module():
     scripts_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'scripts')
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
     import inject_drift_simulation as inj
     return inj
+
+
+def _log_phase(phase: str, **info):
+    """Trace une phase de simulation dans l'index ES `simulation-events`
+    (annotations « Injection drift » / « Récupération » du dashboard Grafana)."""
+    doc = {'timestamp': datetime.now(timezone.utc).isoformat(), 'phase': phase, **info}
+    try:
+        es.index(index='simulation-events', document=doc)
+    except Exception as e:
+        log.warning(f'Indexation simulation-events échouée : {e}')
+    log.info(f'Simulation : {doc}')
+
+
+def _real_pool(inj) -> list:
+    return inj.load_real_pool(os.getenv('MONGO_URI', 'mongodb://mongodb:27017'),
+                              os.getenv('MONGO_DB', 'disinformation_db'))
 
 
 def _run_injection(scenario: str, with_recovery: bool = True, visualization_window: int = 300):
@@ -53,6 +74,8 @@ def _run_injection(scenario: str, with_recovery: bool = True, visualization_wind
             topic=os.getenv('KAFKA_TOPIC_RAW', 'raw-news-stream'),
             with_recovery=with_recovery,
             visualization_window=visualization_window,
+            real_pool=_real_pool(inj) if with_recovery else None,
+            on_phase=_log_phase,
         )
     except Exception as e:
         log.error(f'Injection échouée : {e}')
@@ -62,12 +85,18 @@ def _run_recovery_only():
     """Tâche de fond : envoi d'articles réels pour rééquilibrer le modèle."""
     try:
         from confluent_kafka import Producer
-        import inject_drift_simulation as inj
+        # _get_inj_module() et non `import inject_drift_simulation` direct : sans
+        # injection préalable dans ce processus, scripts/ n'était pas dans
+        # sys.path et la récupération manuelle échouait silencieusement.
+        inj = _get_inj_module()
         producer = Producer({
             'bootstrap.servers': os.getenv('KAFKA_BROKER', 'kafka:29092'),
             'client.id': 'drift-recovery-api',
         })
-        inj.run_recovery(producer, n_articles=100)
+        _log_phase('recovery_start', scenario='manual', n=100)
+        inj.run_recovery(producer, topic=os.getenv('KAFKA_TOPIC_RAW', 'raw-news-stream'),
+                         n_articles=100, real_pool=_real_pool(inj))
+        _log_phase('recovery_end', scenario='manual', n=100)
     except Exception as e:
         log.error(f'Récupération échouée : {e}')
 

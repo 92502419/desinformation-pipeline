@@ -23,6 +23,8 @@ class OnlineTrainer:
         self.batch_count = 0
         self.total_examples = 0
         self.total_loss = 0.0
+        self.onnx_syncs = 0          # v2.5 : nombre de modèles ONNX publiés (marqueurs Grafana)
+        self.last_step_synced = False
 
     def step(self, batch_texts: list, batch_labels: list) -> dict:
         """
@@ -31,6 +33,7 @@ class OnlineTrainer:
         """
         self.batch_count += 1
         self.total_examples += len(batch_texts)
+        self.last_step_synced = False
 
         if not batch_texts or (self.batch_count % TRAIN_EVERY_N_BATCHES != 0):
             log.info(
@@ -57,6 +60,8 @@ class OnlineTrainer:
             log.info(f'[OnlineTrainer] Synchronisation ONNX (batch {self.batch_count})...')
             try:
                 self.nlp.sync_onnx()
+                self.onnx_syncs += 1
+                self.last_step_synced = True
                 log.info('[OnlineTrainer] Modèle ONNX resynchronisé.')
             except Exception as e:
                 log.warning(f'[OnlineTrainer] Erreur sync ONNX (non bloquant) : {e}')

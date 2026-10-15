@@ -19,6 +19,26 @@ datasources:
     jsonData:
       esVersion: "8.14.0"
       timeField: timestamp
+  # v2.5 : un document par micro-batch Spark (apprentissage continu, drift, débit)
+  - name: Elasticsearch-TrainingMetrics
+    uid: es-training-metrics
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    database: "training-metrics*"
+    jsonData:
+      esVersion: "8.14.0"
+      timeField: timestamp
+  # v2.5 : phases des simulations (inject_start/end, recovery_start/end) — annotations
+  - name: Elasticsearch-SimulationEvents
+    uid: es-simulation-events
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    database: "simulation-events*"
+    jsonData:
+      esVersion: "8.14.0"
+      timeField: timestamp
   - name: MongoDB-Disinfo
     uid: mongo-disinfo
     type: grafana-mongodb-datasource
@@ -26,3 +46,12 @@ datasources:
     url: mongodb://mongodb:27017
     jsonData:
       database: disinformation_db
+  # v2.5 : l'API FastAPI, source UNIQUE des indicateurs affichés par Streamlit
+  # (GET /api/v1/stats) — la rangée « Indicateurs » de Grafana lit exactement les
+  # mêmes valeurs, au lieu de les recalculer différemment depuis Elasticsearch.
+  - name: API-Pipeline
+    uid: api-pipeline
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    jsonData:
+      allowedHosts: ["http://api:8000"]

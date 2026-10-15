@@ -12,6 +12,7 @@ from calibration import ProbabilityCalibrator
 
 MODEL_PRETRAINED    = os.getenv('MODEL_PRETRAINED_PATH', '/app/models/pretrained')
 MODEL_ONNX          = os.getenv('MODEL_ONNX_PATH', '/app/models/onnx/model_quantized.onnx')
+MODEL_CHECKPOINT    = os.getenv('MODEL_CHECKPOINT_PATH', '/app/models/checkpoints')
 ONLINE_LR_BASE      = float(os.getenv('ONLINE_LR_BASE', 1e-5))
 RESERVOIR_SIZE      = int(os.getenv('RESERVOIR_BUFFER_SIZE', 5000))
 _RESERVOIR_PER_CLASS = RESERVOIR_SIZE // 2   # 2 500 fake + 2 500 réels
@@ -36,7 +37,17 @@ class ContinualDistilBERT:
             sess_options=_opts,
             providers=['CPUExecutionProvider']
         )
-        self.pt_model = DistilBertForSequenceClassification.from_pretrained(MODEL_PRETRAINED)
+        # Reprise de l'apprentissage continu (v2.5) : sync_onnx() sauvegarde les poids
+        # appris en ligne dans MODEL_CHECKPOINT_PATH et en dérive le modèle ONNX servi.
+        # Repartir de MODEL_PRETRAINED à chaque redémarrage effaçait tout ce qui avait
+        # été appris depuis, et la synchronisation suivante écrasait l'ONNX avec
+        # « modèle d'origine + quelques exemples ». On repart donc du dernier checkpoint.
+        start_from = MODEL_PRETRAINED
+        if (os.getenv('ONLINE_RESUME_FROM_CHECKPOINT', 'true').lower() == 'true'
+                and os.path.exists(os.path.join(MODEL_CHECKPOINT, 'model.safetensors'))):
+            start_from = MODEL_CHECKPOINT
+        self.pt_model = DistilBertForSequenceClassification.from_pretrained(start_from)
+        print(f'[NLP] Poids PyTorch chargés depuis {start_from}')
         self.pt_model.eval()  # eval par défaut — train() uniquement pendant online_update
         self.optimizer = SGD(self.pt_model.parameters(), lr=ONLINE_LR_BASE, momentum=0.9, weight_decay=0.01)
 
@@ -174,7 +185,7 @@ class ContinualDistilBERT:
         from optimum.onnxruntime import ORTModelForSequenceClassification, ORTQuantizer
         from optimum.onnxruntime.configuration import AutoQuantizationConfig
         # Sauvegarder le modèle PyTorch
-        checkpoint_dir = os.getenv('MODEL_CHECKPOINT_PATH', '/app/models/checkpoints')
+        checkpoint_dir = MODEL_CHECKPOINT
         self.pt_model.save_pretrained(checkpoint_dir)
         self.tokenizer.save_pretrained(checkpoint_dir)
         # Re-exporter en ONNX INT8 — config compatible x86_64 et arm64

@@ -14,8 +14,13 @@ from routers.articles   import router as articles_router
 from routers.drift      import router as drift_router
 from routers.web_search import router as web_search_router
 from calibration        import ProbabilityCalibrator
+import es_sync
 
 load_dotenv()
+
+FAKE_RATE_WINDOW = int(os.getenv('FAKE_RATE_WINDOW', 100))
+SIMULATION_SOURCES = ['SimulationDrift', 'SimulationRecovery']
+REAL_FLOW = {'source': {'$nin': SIMULATION_SOURCES}}
 
 app = FastAPI(
     title='Disinformation Monitor API',
@@ -26,9 +31,12 @@ app = FastAPI(
         'classification fake/réel en temps réel via le pipeline ML.\n\n'
         '**Nouveau v2.2** : `/api/v1/model/calibration` — température, seuils et '
         'métriques de la calibration probabiliste (prédiction sélective, verdict '
-        '`uncertain`).'
+        '`uncertain`).\n\n'
+        '**Nouveau v2.5** : statistiques sur trois horizons (100 derniers, 24 h, cumul du '
+        'flux réel), récupération de drift par articles réels, `/api/v1/sync` '
+        '(réconciliation MongoDB → Elasticsearch), rechargement automatique du modèle ONNX.'
     ),
-    version='2.2.0',
+    version='2.5.0',
     docs_url='/docs',
     redoc_url='/redoc',
 )
@@ -50,6 +58,24 @@ app.include_router(web_search_router)  # /api/v1/search/web
 mongo = MongoClient(os.getenv('MONGO_URI', 'mongodb://mongodb:27017'))
 db    = mongo[os.getenv('MONGO_DB', 'disinformation_db')]
 es    = Elasticsearch(os.getenv('ES_HOST', 'http://elasticsearch:9200'))
+
+
+# ── Synchronisation continue MongoDB → Elasticsearch (Streamlit ≡ Grafana) ──
+es_sync.start_background_sync()
+
+
+@app.get('/api/v1/sync/status', tags=['monitoring'])
+def sync_status():
+    """Dernier bilan de la réconciliation MongoDB → Elasticsearch (thread de fond)."""
+    return es_sync.last_run or {'status': 'pending', 'message': 'première réconciliation en cours'}
+
+
+@app.post('/api/v1/sync/run', tags=['monitoring'])
+def sync_run():
+    """Lance immédiatement une réconciliation MongoDB → Elasticsearch."""
+    r = es_sync.reconcile()
+    es_sync.last_run.clear(); es_sync.last_run.update(r)
+    return r
 
 
 # ── ENDPOINT : santé des services ───────────────────────────────────
@@ -84,12 +110,31 @@ def get_stats():
     sont pas démarrés.
     """
     try:
-        total   = db.articles.count_documents({})
-        n_fake  = db.articles.count_documents({'is_fake': 1})
-        n_real  = db.articles.count_documents({'is_fake': 0})
+        # Statistiques GLOBALES calculées sur le FLUX RÉEL uniquement (RSS, GDELT,
+        # recherche web) : les articles de simulation (SimulationDrift /
+        # SimulationRecovery, ~20 000 sur ~24 000 en octobre 2026) écrasaient le
+        # cumul — taux figé à 64 % alors que le flux réel est à ~13 %, et chaque
+        # nouvel article RSS n'avait quasiment aucun effet visible. Ils restent en
+        # base (non destructif) et sont comptés à part (simulation_articles).
+        total   = db.articles.count_documents(REAL_FLOW)
+        n_fake  = db.articles.count_documents({**REAL_FLOW, 'is_fake': 1})
+        n_real  = total - n_fake
+        n_sim   = db.articles.count_documents({'source': {'$in': SIMULATION_SOURCES}})
         n_drift = db.drift_events.count_documents({})
-        cutoff  = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        now     = datetime.now(timezone.utc)
+        cutoff  = (now - timedelta(hours=1)).isoformat()
         last_1h = db.articles.count_documents({'processed_at': {'$gte': cutoff}})
+        cutoff_24h = (now - timedelta(hours=24)).isoformat()
+        total_24h  = db.articles.count_documents({**REAL_FLOW, 'processed_at': {'$gte': cutoff_24h}})
+        fake_24h   = db.articles.count_documents({**REAL_FLOW, 'is_fake': 1,
+                                                  'processed_at': {'$gte': cutoff_24h}})
+        # Taux de fake COURANT : fenêtre glissante sur les N derniers articles traités,
+        # simulation INCLUSE (c'est lui qui montre le drift puis la récupération).
+        # FAKE_RATE_WINDOW = 100 = taille d'une récupération : après récupération,
+        # la fenêtre ne contient plus que des articles réels.
+        recent = list(db.articles.find({}, {'_id': 0, 'is_fake': 1})
+                      .sort('processed_at', -1).limit(FAKE_RATE_WINDOW))
+        n_recent_fake = sum(1 for d in recent if d.get('is_fake') == 1)
     except Exception:
         return {
             'total_articles': 0, 'fake_articles': 0, 'real_articles': 0,
@@ -97,15 +142,25 @@ def get_stats():
             'status': 'degraded', 'error': 'MongoDB indisponible',
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
+    pct = lambda a, b: round(a / b * 100, 2) if b > 0 else 0
+    fake_rate = pct(n_recent_fake, len(recent))
     return {
-        'total_articles':    total,
-        'fake_articles':     n_fake,
-        'real_articles':     n_real,
-        'fake_rate':         round(n_fake / total * 100, 2) if total > 0 else 0,
-        'drift_events':      n_drift,
-        'articles_last_hour': last_1h,
-        'status':            'ok',
-        'timestamp':         datetime.now(timezone.utc).isoformat(),
+        'total_articles':      total,
+        'fake_articles':       n_fake,
+        'real_articles':       n_real,
+        'simulation_articles': n_sim,
+        'fake_rate':           fake_rate,
+        'real_rate':           round(100 - fake_rate, 2) if recent else 0,
+        'fake_rate_window':    len(recent),
+        'fake_rate_global':    pct(n_fake, total),
+        'real_rate_global':    pct(n_real, total),
+        'articles_24h':        total_24h,
+        'fake_rate_24h':       pct(fake_24h, total_24h),
+        'real_rate_24h':       pct(total_24h - fake_24h, total_24h),
+        'drift_events':        n_drift,
+        'articles_last_hour':  last_1h,
+        'status':              'ok',
+        'timestamp':           now.isoformat(),
     }
 
 

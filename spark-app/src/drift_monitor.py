@@ -28,7 +28,7 @@
 from river import drift
 from typing import Dict
 from datetime import datetime, timezone
-import os, math
+import os, math, time
 
 
 ADWIN_DELTA    = float(os.getenv('ADWIN_DELTA', 0.002))
@@ -46,6 +46,14 @@ DRIFT_THRESH   = float(os.getenv('DRIFT_COMPOSITE_THRESHOLD', 0.4))
 CONFIRM_THRESH = float(os.getenv('DRIFT_CONFIRMED_THRESHOLD', 0.8))
 LR_BASE        = float(os.getenv('ONLINE_LR_BASE', 1e-5))
 LR_DRIFT       = float(os.getenv('ONLINE_LR_DRIFT', 5e-5))
+# Expiration TEMPORELLE de la dérive (v2.5, 2026-10-14) : la rémanence et la
+# sortie de dérive étaient exprimées uniquement en messages (100 et 1000). Avec
+# le flux RSS réel (~10-20 articles/h), une dérive restait « active » plusieurs
+# jours après la fin de la simulation — Grafana/Streamlit ne montraient jamais
+# le retour à la normale. Sans nouvelle détection pendant DRIFT_RESET_SECONDS,
+# la rémanence est purgée et la dérive se termine.
+RESET_SECONDS  = float(os.getenv('DRIFT_RESET_SECONDS', 600))
+RESET_MESSAGES = int(os.getenv('DRIFT_RESET_MESSAGES', 1000))
 
 
 def binary_entropy(p: float) -> float:
@@ -76,19 +84,7 @@ class DynamicDriftMonitor:
         if use_entropy_channel is None:
             use_entropy_channel = os.getenv('DRIFT_ENTROPY_CHANNEL', 'true').lower() == 'true'
         self.use_entropy_channel = use_entropy_channel
-        self.adwin        = drift.ADWIN(delta=ADWIN_DELTA)
-        self.kswin        = drift.KSWIN(
-            window_size=KSWIN_WINDOW,
-            stat_size=KSWIN_WINDOW // 3,
-            alpha=KSWIN_ALPHA,
-        )
-        self.page_hinkley = drift.PageHinkley(
-            min_instances=30,
-            delta=PH_DELTA,
-            threshold=PH_THRESHOLD,
-            alpha=1 - 0.0001,
-        )
-        self.entropy_adwin = drift.ADWIN(delta=ENTROPY_ADWIN_DELTA) if use_entropy_channel else None
+        self._init_detectors()
         self.weights = dict(self.WEIGHTS)
         self._names = list(self.weights.keys())
 
@@ -113,12 +109,52 @@ class DynamicDriftMonitor:
         self.SIGNAL_HOLD = int(os.getenv('DRIFT_SIGNAL_HOLD_MESSAGES', 100))
         self._hold        = {name: 0 for name in self._names}
         self._entropy_hold = 0
+        self._last_detection_ts = 0.0
         print(
             f'[DRIFT] Monitor initialisé | '
             f'ADWIN δ={ADWIN_DELTA} | KSWIN α={KSWIN_ALPHA} | '
             f'PageHinkley δ={PH_DELTA} λ={PH_THRESHOLD} | '
             f'EntropyADWIN {"actif (OU logique) δ=" + str(ENTROPY_ADWIN_DELTA) if use_entropy_channel else "désactivé"}'
         )
+
+    def _init_detectors(self):
+        self.adwin        = drift.ADWIN(delta=ADWIN_DELTA)
+        self.kswin        = drift.KSWIN(
+            window_size=KSWIN_WINDOW,
+            stat_size=KSWIN_WINDOW // 3,
+            alpha=KSWIN_ALPHA,
+        )
+        self.page_hinkley = drift.PageHinkley(
+            min_instances=30,
+            delta=PH_DELTA,
+            threshold=PH_THRESHOLD,
+            alpha=1 - 0.0001,
+        )
+        self.entropy_adwin = drift.ADWIN(delta=ENTROPY_ADWIN_DELTA) if self.use_entropy_channel else None
+
+    def _clear_drift_state(self):
+        self._hold = {name: 0 for name in self._names}
+        self._entropy_hold   = 0
+        self.entropy_active  = False
+        self.composite_score = 0.0
+        self.drift_active    = False
+        self.drift_confirmed = False
+        self.messages_since_drift = 0
+
+    def recover(self) -> bool:
+        """Fin de dérive explicite après une récupération (articles réels rejoués
+        par POST /api/v1/drift/recover ou la récupération automatique).
+
+        Les détecteurs sont ré-instanciés : leurs fenêtres contiennent encore la
+        campagne injectée, et le RETOUR à la normale (chute de p_fake) est
+        lui-même un changement de distribution que ADWIN/KSWIN signaleraient comme
+        une nouvelle dérive. Nouvelle référence = flux post-récupération.
+        Retourne True si une dérive était active (transition à journaliser).
+        """
+        was_active = self.drift_active
+        self._init_detectors()
+        self._clear_drift_state()
+        return was_active
 
     def update(self, confidence: float, error_bit: int = 0) -> Dict:
         # ── Validation et nettoyage des entrées ──────────────────────
@@ -141,11 +177,22 @@ class DynamicDriftMonitor:
         # ── Rémanence : un détecteur qui vient de pulser reste "actif"
         #    pendant SIGNAL_HOLD messages, pour laisser une chance aux
         #    deux autres détecteurs de le rejoindre dans le score composite.
+        now = time.time()
         for name, detector in detectors:
             if detector.drift_detected:
                 self._hold[name] = self.SIGNAL_HOLD
+                self._last_detection_ts = now
             elif self._hold[name] > 0:
                 self._hold[name] -= 1
+        if self.use_entropy_channel:
+            self.entropy_adwin.update(binary_entropy(confidence))
+            if self.entropy_adwin.drift_detected:
+                self._last_detection_ts = now
+
+        # ── Expiration temporelle : plus aucune détection depuis RESET_SECONDS ──
+        expired = self.drift_active and now - self._last_detection_ts > RESET_SECONDS
+        if expired:
+            self._clear_drift_state()
 
         # ── Score composite pondéré (3 détecteurs historiques, inchangé) ──
         signals = {name: float(self._hold[name] > 0) for name in self._names}
@@ -153,7 +200,6 @@ class DynamicDriftMonitor:
 
         # ── Canal EntropyADWIN : indépendant, en OU logique ───────────
         if self.use_entropy_channel:
-            self.entropy_adwin.update(binary_entropy(confidence))
             if self.entropy_adwin.drift_detected:
                 self._entropy_hold = self.SIGNAL_HOLD
             elif self._entropy_hold > 0:
@@ -177,7 +223,7 @@ class DynamicDriftMonitor:
             self.messages_since_drift = 0
         else:
             self.messages_since_drift += 1
-            if self.messages_since_drift > 1000:
+            if self.messages_since_drift > RESET_MESSAGES:
                 self.drift_active    = False
                 self.drift_confirmed = False
 

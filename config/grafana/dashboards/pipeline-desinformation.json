@@ -10,22 +10,747 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 5,
   "refresh": "10s",
   "time": {
     "from": "now-6h",
     "to": "now"
   },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "Injection de drift",
+        "enable": true,
+        "iconColor": "red",
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "es-simulation-events"
+        },
+        "query": "phase:inject_start",
+        "timeField": "timestamp",
+        "textField": "phase",
+        "tagsField": "scenario",
+        "target": {
+          "query": "phase:inject_start",
+          "limit": 100
+        }
+      },
+      {
+        "name": "Récupération",
+        "enable": true,
+        "iconColor": "green",
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "es-simulation-events"
+        },
+        "query": "phase:recovery_start",
+        "timeField": "timestamp",
+        "textField": "phase",
+        "tagsField": "scenario",
+        "target": {
+          "query": "phase:recovery_start",
+          "limit": 100
+        }
+      },
+      {
+        "name": "Modèle ONNX mis à jour (apprentissage continu publié)",
+        "enable": true,
+        "iconColor": "blue",
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "es-training-metrics"
+        },
+        "query": "onnx_synced:true",
+        "timeField": "timestamp",
+        "textField": "onnx_syncs_total",
+        "tagsField": "",
+        "target": {
+          "query": "onnx_synced:true",
+          "limit": 100
+        }
+      }
+    ]
+  },
   "panels": [
     {
+      "id": 104,
+      "type": "row",
+      "title": "Indicateurs — mêmes valeurs que Streamlit (API /api/v1/stats)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "title": "Vue d'ensemble (page Tableau de bord de Streamlit)",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 24,
+        "h": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "api-pipeline"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Faux détectés"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Vrais détectés"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Taux de fake (100 derniers)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Alertes drift"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "vertical"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "api-pipeline"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://api:8000/api/v1/stats",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "",
+          "columns": [
+            {
+              "selector": "total_articles",
+              "text": "Articles analysés (flux réel)",
+              "type": "number"
+            },
+            {
+              "selector": "fake_articles",
+              "text": "Faux détectés",
+              "type": "number"
+            },
+            {
+              "selector": "real_articles",
+              "text": "Vrais détectés",
+              "type": "number"
+            },
+            {
+              "selector": "fake_rate",
+              "text": "Taux de fake (100 derniers)",
+              "type": "number"
+            },
+            {
+              "selector": "drift_events",
+              "text": "Alertes drift",
+              "type": "number"
+            },
+            {
+              "selector": "articles_last_hour",
+              "text": "Articles (1h)",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "description": "Valeurs lues directement sur GET /api/v1/stats, l'endpoint qui alimente les KPI de Streamlit : les deux tableaux de bord affichent donc exactement les mêmes chiffres (à l'intervalle de rafraîchissement près).",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "Articles analysés (flux réel)": 0,
+              "Faux détectés": 1,
+              "Vrais détectés": 2,
+              "Taux de fake (100 derniers)": 3,
+              "Alertes drift": 4,
+              "Articles (1h)": 5
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "title": "Réel / fake sur trois horizons (ligne de KPI de Streamlit)",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "api-pipeline"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Réel — 100 derniers"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fake — 100 derniers"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Réel — 24 h"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fake — 24 h"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Réel — cumul flux réel"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fake — cumul flux réel"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Articles de simulation (exclus)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "vertical"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "api-pipeline"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://api:8000/api/v1/stats",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "",
+          "columns": [
+            {
+              "selector": "real_rate",
+              "text": "Réel — 100 derniers",
+              "type": "number"
+            },
+            {
+              "selector": "fake_rate",
+              "text": "Fake — 100 derniers",
+              "type": "number"
+            },
+            {
+              "selector": "real_rate_24h",
+              "text": "Réel — 24 h",
+              "type": "number"
+            },
+            {
+              "selector": "fake_rate_24h",
+              "text": "Fake — 24 h",
+              "type": "number"
+            },
+            {
+              "selector": "real_rate_global",
+              "text": "Réel — cumul flux réel",
+              "type": "number"
+            },
+            {
+              "selector": "fake_rate_global",
+              "text": "Fake — cumul flux réel",
+              "type": "number"
+            },
+            {
+              "selector": "simulation_articles",
+              "text": "Articles de simulation (exclus)",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "description": "100 derniers : simulations incluses (montre drift puis récupération). 24 h et cumul : flux réel seul (RSS, GDELT, recherche web). Les articles de simulation restent en base, comptés à part.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "Réel — 100 derniers": 0,
+              "Fake — 100 derniers": 1,
+              "Réel — 24 h": 2,
+              "Fake — 24 h": 3,
+              "Réel — cumul flux réel": 4,
+              "Fake — cumul flux réel": 5,
+              "Articles de simulation (exclus)": 6
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Flux de données traité (Kafka → Spark → Elasticsearch)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
       "id": 1,
-      "title": "P1 — Taux de Fake (%)",
+      "title": "P1 — Taux de fake (100 derniers articles)",
       "type": "gauge",
       "gridPos": {
-        "h": 8,
-        "w": 6,
         "x": 0,
-        "y": 0
+        "y": 10,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "api-pipeline"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 40
+              },
+              {
+                "color": "red",
+                "value": 70
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "api-pipeline"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://api:8000/api/v1/stats",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "",
+          "columns": [
+            {
+              "selector": "fake_rate",
+              "text": "Taux de fake",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "description": "Même indicateur que la jauge « Taux de fake » de Streamlit (GET /api/v1/stats, fenêtre des 100 derniers articles traités, simulations incluses) : monte pendant une injection de drift, retombe dès la récupération. Seuils 40 % / 70 %."
+    },
+    {
+      "id": 2,
+      "title": "P2 — Flux d'articles traités par minute (réel vs fake)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 6,
+        "y": 10,
+        "w": 18,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-articles"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Réel"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fake"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "is_fake:0",
+          "metrics": [
+            {
+              "type": "count",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "1m"
+              }
+            }
+          ],
+          "timeField": "processed_at",
+          "alias": "Réel"
+        },
+        {
+          "refId": "B",
+          "query": "is_fake:1",
+          "metrics": [
+            {
+              "type": "count",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "1m"
+              }
+            }
+          ],
+          "timeField": "processed_at",
+          "alias": "Fake"
+        }
+      ],
+      "description": "Volume d'articles classés par Spark chaque minute, ventilé par verdict. En flux RSS naturel le débit est faible (quelques articles toutes les 2-4 min) : les barres sont espacées, c'est normal."
+    },
+    {
+      "id": 8,
+      "title": "P8 — Taux de fake glissant (moyenne par 5 min)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
       },
       "datasource": {
         "type": "elasticsearch",
@@ -34,9 +759,19 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "spanNulls": true,
+            "showPoints": "always",
+            "pointSize": 5,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
           "min": 0,
           "max": 1,
-          "decimals": 1,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -54,25 +789,27 @@
               }
             ]
           }
-        }
+        },
+        "overrides": []
       },
       "options": {
-        "reduceOptions": {
-          "calcs": [
-            "mean"
-          ],
-          "fields": "",
-          "values": false
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
         }
       },
       "targets": [
         {
+          "refId": "A",
           "query": "*",
           "metrics": [
             {
               "type": "avg",
-              "field": "is_fake",
-              "id": "1"
+              "id": "1",
+              "field": "is_fake"
             }
           ],
           "bucketAggs": [
@@ -81,90 +818,26 @@
               "field": "processed_at",
               "id": "2",
               "settings": {
-                "interval": "auto",
+                "interval": "5m",
                 "min_doc_count": "1"
               }
             }
           ],
-          "timeField": "processed_at"
+          "timeField": "processed_at",
+          "alias": "Taux de fake"
         }
       ],
-      "description": "Moyenne de is_fake (0/1) sur la fenêtre sélectionnée, réduite en une valeur (calc « mean ») et rendue en pourcentage (unité percentunit : 0,132 s'affiche 13,2 %). Seuils alignés sur le dashboard Streamlit : avertissement 40 %, critique 70 %."
+      "description": "Moyenne de is_fake par fenêtre de 5 minutes : c'est la courbe qui montre le cycle complet normal → injection de drift (hausse) → récupération (retour au niveau de base)."
     },
     {
-      "id": 2,
-      "title": "P2 — Flux d'articles par minute (réel vs fake)",
+      "id": 9,
+      "title": "P9 — Simulation : articles de drift injectés vs articles de récupération",
       "type": "timeseries",
       "gridPos": {
-        "h": 8,
-        "w": 18,
-        "x": 6,
-        "y": 0
-      },
-      "datasource": {
-        "type": "elasticsearch",
-        "uid": "es-articles"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "targets": [
-        {
-          "query": "is_fake:0",
-          "alias": "Réel",
-          "metrics": [
-            {
-              "type": "count",
-              "id": "1"
-            }
-          ],
-          "bucketAggs": [
-            {
-              "type": "date_histogram",
-              "field": "processed_at",
-              "id": "2",
-              "settings": {
-                "interval": "1m"
-              }
-            }
-          ],
-          "timeField": "processed_at"
-        },
-        {
-          "query": "is_fake:1",
-          "alias": "Fake",
-          "metrics": [
-            {
-              "type": "count",
-              "id": "1"
-            }
-          ],
-          "bucketAggs": [
-            {
-              "type": "date_histogram",
-              "field": "processed_at",
-              "id": "2",
-              "settings": {
-                "interval": "1m"
-              }
-            }
-          ],
-          "timeField": "processed_at"
-        }
-      ],
-      "description": "Volume d'articles ingérés par minute, ventilé par label — correspond au panneau P2."
-    },
-    {
-      "id": 3,
-      "title": "P3 — Score composite de drift",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
+        "x": 12,
+        "y": 18,
         "w": 12,
-        "x": 0,
-        "y": 8
+        "h": 8
       },
       "datasource": {
         "type": "elasticsearch",
@@ -172,39 +845,62 @@
       },
       "fieldConfig": {
         "defaults": {
-          "min": 0,
-          "max": 1,
+          "unit": "short",
           "custom": {
-            "thresholdsStyle": {
-              "mode": "line"
-            }
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Drift injecté"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Récupération"
+            },
+            "properties": [
               {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 0.4
-              },
-              {
-                "color": "red",
-                "value": 0.8
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
               }
             ]
           }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
         }
       },
       "targets": [
         {
-          "query": "*",
+          "refId": "A",
+          "query": "source.keyword:\"SimulationDrift\"",
           "metrics": [
             {
-              "type": "avg",
-              "field": "drift_score",
+              "type": "count",
               "id": "1"
             }
           ],
@@ -214,70 +910,281 @@
               "field": "processed_at",
               "id": "2",
               "settings": {
-                "interval": "30s"
+                "interval": "1m"
               }
             }
           ],
-          "timeField": "processed_at"
-        }
-      ],
-      "description": "Score composite ADWIN(0.45)+KSWIN(0.35)+PageHinkley(0.20), moyenné par fenêtre de 30s — correspond au panneau P3, point clé de la démo (Acte 4)."
-    },
-    {
-      "id": 4,
-      "title": "P4 — Événements de Concept Drift confirmés",
-      "type": "table",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "datasource": {
-        "type": "elasticsearch",
-        "uid": "es-drift-events"
-      },
-      "targets": [
+          "timeField": "processed_at",
+          "alias": "Drift injecté"
+        },
         {
-          "query": "drift_confirmed:true",
+          "refId": "B",
+          "query": "source.keyword:\"SimulationRecovery\"",
           "metrics": [
             {
-              "type": "raw_data",
+              "type": "count",
               "id": "1"
             }
           ],
-          "bucketAggs": [],
-          "timeField": "timestamp"
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "1m"
+              }
+            }
+          ],
+          "timeField": "processed_at",
+          "alias": "Récupération"
         }
       ],
-      "description": "Liste des évènements où le score composite a franchi le seuil de confirmation (0.8) — index drift-events."
+      "description": "Articles issus de POST /api/v1/drift/inject (rouge) et de la récupération (vert, articles réels fiables rejoués). Les annotations verticales marquent le début de chaque phase."
     },
     {
-      "id": 5,
-      "title": "P5 — Learning rate de l'apprentissage continu",
+      "id": 13,
+      "title": "P13 — Part réel / fake du flux réel (par heure, simulations exclues)",
       "type": "timeseries",
       "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
-        "y": 16
+        "y": 26,
+        "w": 24,
+        "h": 8
       },
       "datasource": {
         "type": "elasticsearch",
-        "uid": "es-drift-events"
+        "uid": "es-articles"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "scientific"
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 85,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "percent"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Réel"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fake"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
         }
       },
       "targets": [
         {
+          "refId": "A",
+          "query": "is_fake:0 AND NOT source.keyword:(SimulationDrift OR SimulationRecovery)",
+          "metrics": [
+            {
+              "type": "count",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "1h"
+              }
+            }
+          ],
+          "timeField": "processed_at",
+          "alias": "Réel"
+        },
+        {
+          "refId": "B",
+          "query": "is_fake:1 AND NOT source.keyword:(SimulationDrift OR SimulationRecovery)",
+          "metrics": [
+            {
+              "type": "count",
+              "id": "1"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "processed_at",
+              "id": "2",
+              "settings": {
+                "interval": "1h"
+              }
+            }
+          ],
+          "timeField": "processed_at",
+          "alias": "Fake"
+        }
+      ],
+      "description": "Proportion d'articles réels (vert) et fake (rouge) parmi les articles scrapés en temps réel (RSS, GDELT, recherche web), heure par heure : c'est ici qu'on voit le taux de réel monter et descendre au fil du flux, indépendamment des simulations de drift."
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "Concept drift (ADWIN + KSWIN + PageHinkley + EntropyADWIN)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 3,
+      "title": "P3 — Score composite de drift et état de dérive",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-training-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "spanNulls": true,
+            "showPoints": "auto",
+            "pointSize": 4
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Lots en dérive"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Score composite"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
           "query": "*",
           "metrics": [
             {
-              "type": "avg",
-              "field": "recommended_lr",
+              "type": "max",
+              "id": "1",
+              "field": "drift_score"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "1m"
+              }
+            }
+          ],
+          "timeField": "timestamp",
+          "alias": "Score composite"
+        },
+        {
+          "refId": "B",
+          "query": "drift_active:true",
+          "metrics": [
+            {
+              "type": "count",
               "id": "1"
             }
           ],
@@ -291,20 +1198,420 @@
               }
             }
           ],
+          "timeField": "timestamp",
+          "alias": "Lots en dérive"
+        }
+      ],
+      "description": "Score composite ADWIN(0.45)+KSWIN(0.35)+PageHinkley(0.20) par micro-batch (index training-metrics, écrit à CHAQUE lot, dérive ou non). Seuil de dérive 0.4, confirmation 0.8. La dérive se termine à la récupération ou après DRIFT_RESET_SECONDS sans nouvelle détection."
+    },
+    {
+      "id": 4,
+      "title": "P4 — Événements de drift et de récupération",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-drift-events"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "drift_confirmed:true OR phase:recovery",
+          "metrics": [
+            {
+              "type": "raw_data",
+              "id": "1",
+              "settings": {
+                "size": "100"
+              }
+            }
+          ],
+          "bucketAggs": [],
           "timeField": "timestamp"
         }
       ],
-      "description": "Passage automatique de 1e-5 (régime stable) à 5e-5 (régime de dérive) — index drift-events. Correspond au panneau P5."
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "timestamp": 0,
+              "phase": 1,
+              "composite_score": 2,
+              "drift_confirmed": 3,
+              "recommended_lr": 4,
+              "confidence_mean_last100": 5,
+              "messages_total": 6
+            },
+            "excludeByName": {
+              "_id": true,
+              "_index": true,
+              "_type": true,
+              "highlight": true,
+              "sort": true,
+              "_batch_id": true,
+              "total_drift_events": true
+            }
+          }
+        }
+      ],
+      "description": "Index drift-events : lots où la dérive est confirmée (score ≥ 0.8) et événements phase=recovery (fin de dérive déclenchée par la récupération)."
+    },
+    {
+      "id": 102,
+      "type": "row",
+      "title": "Apprentissage continu (online learning en streaming)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 5,
+      "title": "P5 — Learning rate de l'apprentissage continu",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-training-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "sci",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [
+            {
+              "type": "max",
+              "id": "1",
+              "field": "learning_rate"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "1m"
+              }
+            }
+          ],
+          "timeField": "timestamp",
+          "alias": "Learning rate"
+        }
+      ],
+      "description": "LR recommandé par le moniteur à chaque lot : 1e-5 en régime stable, 5e-5 pendant une dérive, retour à 1e-5 après récupération."
+    },
+    {
+      "id": 10,
+      "title": "P10 — Exemples d'entraînement et loss en ligne",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-training-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "spanNulls": true,
+            "showPoints": "auto",
+            "pointSize": 4
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Exemples appris (5 min)"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Loss en ligne"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [
+            {
+              "type": "sum",
+              "id": "1",
+              "field": "train_examples_batch"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "5m"
+              }
+            }
+          ],
+          "timeField": "timestamp",
+          "alias": "Exemples appris (5 min)"
+        },
+        {
+          "refId": "B",
+          "query": "trained:true",
+          "metrics": [
+            {
+              "type": "avg",
+              "id": "1",
+              "field": "online_loss"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "5m"
+              }
+            }
+          ],
+          "timeField": "timestamp",
+          "alias": "Loss en ligne"
+        }
+      ],
+      "description": "Articles à confiance > 0,85 ajoutés à l'apprentissage continu, et loss des pas de gradient (1 lot sur ONLINE_TRAIN_EVERY_N)."
+    },
+    {
+      "id": 11,
+      "title": "P11 — Reservoir équilibré (fake / réel)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-training-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "spanNulls": true,
+            "showPoints": "auto",
+            "pointSize": 4
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reservoir fake"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reservoir réel"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [
+            {
+              "type": "max",
+              "id": "1",
+              "field": "reservoir_fake"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "5m"
+              }
+            }
+          ],
+          "timeField": "timestamp",
+          "alias": "Reservoir fake"
+        },
+        {
+          "refId": "B",
+          "query": "*",
+          "metrics": [
+            {
+              "type": "max",
+              "id": "1",
+              "field": "reservoir_real"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "5m"
+              }
+            }
+          ],
+          "timeField": "timestamp",
+          "alias": "Reservoir réel"
+        }
+      ],
+      "description": "Taille des deux buffers de replay (anti-oubli catastrophique). Repart de zéro à chaque redémarrage de spark-app."
+    },
+    {
+      "id": 103,
+      "type": "row",
+      "title": "Modèle et volume",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
     },
     {
       "id": 6,
       "title": "P6 — Confiance moyenne du modèle",
       "type": "stat",
       "gridPos": {
-        "h": 8,
+        "x": 0,
+        "y": 53,
         "w": 6,
-        "x": 12,
-        "y": 16
+        "h": 8
       },
       "datasource": {
         "type": "elasticsearch",
@@ -325,16 +1632,18 @@
           ],
           "fields": "",
           "values": false
-        }
+        },
+        "graphMode": "area"
       },
       "targets": [
         {
+          "refId": "A",
           "query": "*",
           "metrics": [
             {
               "type": "avg",
-              "field": "confidence",
-              "id": "1"
+              "id": "1",
+              "field": "confidence"
             }
           ],
           "bucketAggs": [
@@ -351,17 +1660,81 @@
           "timeField": "processed_at"
         }
       ],
-      "description": "Confiance moyenne du modèle sur les articles récents (calc « mean » sur les buckets). NB : la latence d'inférence réelle (ONNX, ~19 ms/article mesurés) n'est pas journalisée par article — voir reports/metrics_summary.json."
+      "description": "Confiance moyenne du modèle sur la plage sélectionnée."
+    },
+    {
+      "id": 12,
+      "title": "P12 — Latence d'inférence (ms / article)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 6,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es-training-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "spanNulls": true,
+            "showPoints": "auto",
+            "pointSize": 4
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [
+            {
+              "type": "avg",
+              "id": "1",
+              "field": "latency_ms_per_article"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "type": "date_histogram",
+              "field": "timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "5m"
+              }
+            }
+          ],
+          "timeField": "timestamp",
+          "alias": "Latence"
+        }
+      ],
+      "description": "Temps moyen de la boucle d'inférence ONNX + drift par article, mesuré dans Spark."
     },
     {
       "id": 7,
-      "title": "P7 — Total articles traités",
+      "title": "P7 — Articles traités sur la plage (simulations incluses)",
       "type": "stat",
       "gridPos": {
-        "h": 8,
-        "w": 6,
         "x": 18,
-        "y": 16
+        "y": 53,
+        "w": 6,
+        "h": 8
       },
       "datasource": {
         "type": "elasticsearch",
@@ -369,8 +1742,12 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 0
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
         }
       },
       "options": {
@@ -380,10 +1757,12 @@
           ],
           "fields": "",
           "values": false
-        }
+        },
+        "graphMode": "area"
       },
       "targets": [
         {
+          "refId": "A",
           "query": "*",
           "metrics": [
             {
@@ -405,7 +1784,7 @@
           "timeField": "processed_at"
         }
       ],
-      "description": "Nombre total d'articles traités sur la fenêtre de temps sélectionnée (somme des comptages par bucket). Remplace le 'F1-Score Prequential' de la doc d'origine, qui nécessiterait un label de vérité terrain continu sur le flux de production (indisponible)."
+      "description": "Nombre d'articles traités par Spark sur la plage de temps sélectionnée, simulations comprises (à ne pas confondre avec « Articles analysés (flux réel) », cumul depuis l'origine)."
     }
   ]
 }

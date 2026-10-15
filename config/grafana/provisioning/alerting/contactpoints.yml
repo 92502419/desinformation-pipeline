@@ -1,0 +1,29 @@
+# config/grafana/provisioning/alerting/contactpoints.yml — Notification des alertes par e-mail
+# KOMOSSI Sosso — Master BIG DATA IA, Institut ESI — UCAO-UUT, 2025-2026
+#
+# Les 5 règles de alerts.yml sont routées vers le contact point « email-pipeline ».
+# Le serveur SMTP est configuré par les variables GF_SMTP_* du service grafana
+# (docker-compose.yml), alimentées par GRAFANA_SMTP_* dans .env. Destinataire(s) :
+# GRAFANA_ALERT_EMAIL (plusieurs adresses séparées par « ; »).
+# Tant que GRAFANA_SMTP_ENABLED=false, les alertes restent visibles dans
+# Grafana > Alerting sans envoi externe.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: email-pipeline
+    receivers:
+      - uid: email-pipeline
+        type: email
+        settings:
+          addresses: ${GRAFANA_ALERT_EMAIL}
+          singleEmail: true
+        disableResolveMessage: false   # e-mail aussi au retour à la normale (ex. après récupération)
+
+policies:
+  - orgId: 1
+    receiver: email-pipeline
+    group_by: ['alertname', 'severity']
+    group_wait: 30s        # regroupe les alertes déclenchées ensemble (drift + taux de fake)
+    group_interval: 5m
+    repeat_interval: 4h    # rappel si l'alerte reste active

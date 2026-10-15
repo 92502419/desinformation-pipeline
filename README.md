@@ -70,6 +70,8 @@ pilote NVML cassé depuis l'incident du 26/08/2026, torch.cuda désactivé par s
 │   │  collections :          │          │  index :                     │      │
 │   │   • articles            │          │   • articles                 │      │
 │   │   • drift_events        │          │   • drift-events             │      │
+│   │                         │          │   • training-metrics (1/lot) │      │
+│   │                         │          │   • simulation-events        │      │
 │   └────────────┬────────────┘          └───────────────┬──────────────┘      │
 └────────────────┼───────────────────────────────────────┼─────────────────────┘
                  │                                       │
@@ -84,8 +86,8 @@ pilote NVML cassé depuis l'incident du 26/08/2026, torch.cuda désactivé par s
 │            │                                                                  │
 │            ├──────────────►  Streamlit :8501   (dashboard interactif, 7 pages)│
 │            │                                                                  │
-│   ES / Mongo ────────────►  Grafana :3000      (dashboard P1–P7 + 5 règles    │
-│                                                  d'alerte natives, refresh 10s)│
+│   ES ────────────────────►  Grafana :3000      (dashboard P1–P13 + 5 règles   │
+│                                                 d'alerte notifiées par e-mail)│
 │   Spark UI :4040 (driver local[2], jobs/DAG/métriques des micro-batchs)       │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -99,8 +101,8 @@ pilote NVML cassé depuis l'incident du 26/08/2026, torch.cuda désactivé par s
 | Calibration probabiliste | Temperature scaling + prédiction sélective (zone grise `uncertain`) | `spark-app/src/calibration.py`, `api/src/calibration.py`, `scripts/calibrate_model.py` |
 | Tri-détecteur de drift | ADWIN + KSWIN + PageHinkley + ADWIN sur l'entropie (River) | `spark-app/src/drift_monitor.py` |
 | MongoDB / Elasticsearch | Stockage documents / indexation full-text | `docker-compose.yml`, `config/` |
-| API FastAPI | Endpoints REST (`/health`, `/api/v1/stats`, `/api/v1/model/calibration`, `/api/v1/articles`, `/api/v1/drift`, `/api/v1/search/web`) | `api/` |
-| Grafana | Dashboard auto-provisionné (7 panneaux P1–P7) + 5 règles d'alerte natives, datasources Elasticsearch + MongoDB | `config/grafana/` |
+| API FastAPI | Endpoints REST (`/health`, `/api/v1/stats`, `/api/v1/model/calibration`, `/api/v1/articles`, `/api/v1/drift`, `/api/v1/search/web`, `/api/v1/sync`) + réconciliation continue MongoDB → Elasticsearch | `api/` |
+| Grafana 10.4.19 | Dashboard auto-provisionné : rangée d'indicateurs **identiques à Streamlit** (lus sur `/api/v1/stats` via le plugin Infinity) + 13 panneaux P1–P13 (flux traité, concept drift, apprentissage continu, modèle) + annotations injection/récupération + 5 règles d'alerte notifiées par e-mail | `config/grafana/` |
 | Streamlit | Dashboard interactif 7 pages | `streamlit-dashboard/` |
 
 ---
@@ -119,8 +121,8 @@ desinformation-pipeline/
 │   └── processed/          # train/val/test.csv + preprocessing_report.json
 ├── models/
 │   ├── pretrained/         # modèle HuggingFace (config, tokenizer, safetensors)
-│   ├── checkpoints/        # checkpoints intermédiaires (online learning)
-│   ├── onnx/               # modèle quantifié INT8 pour l'inférence
+│   ├── checkpoints/        # poids appris en ligne (publiés tous les 100 lots, repris au redémarrage)
+│   ├── onnx/               # modèle servi, ONNX INT8 (ré-exporté par Spark à chaque publication)
 │   └── calibration.json    # température + seuils (scripts/calibrate_model.py)
 ├── producer/               # producteur Kafka (RSS + GDELT)
 ├── spark-app/              # job Spark Structured Streaming (NLP + drift + online learning)
@@ -188,6 +190,10 @@ python scripts/export_onnx.py
 # -> models/onnx/model_quantized.onnx
 ```
 
+> En production, `models/onnx/` est ensuite mis à jour par l'apprentissage continu
+> (voir « Apprentissage continu »). Ne relancer `export_onnx.py` qu'après un nouvel
+> entraînement hors ligne : il remplace le modèle appris en ligne par le modèle d'origine.
+
 ### 6. Calibration probabiliste et prédiction sélective
 
 ```bash
@@ -215,7 +221,7 @@ Interfaces :
 | Service | URL |
 |---|---|
 | Streamlit (dashboard) | http://localhost:8501 |
-| Grafana (7 panneaux + 5 règles d'alerte) | http://localhost:3000 — `admin` / `GRAFANA_ADMIN_PASSWORD` du `.env` |
+| Grafana (13 panneaux + 5 règles d'alerte) | http://localhost:3000 — `admin` / `GRAFANA_ADMIN_PASSWORD` du `.env` |
 | API + Swagger | http://localhost:8000/docs |
 | Kafdrop (monitoring Kafka) | http://localhost:9000 |
 | Spark UI (driver local[2]) | http://localhost:4040 |
@@ -246,6 +252,74 @@ python scripts/experiment_derive_opportunite.py             # -> reports/experie
 python scripts/experiment_federated_simulation.py --rounds 15  # -> reports/experience_federated_simulation.md
 python scripts/inject_drift_simulation.py --scenario B      # injecte une dérive dans le flux live
 ```
+
+### 11. Simulation de drift, récupération et lecture des taux
+
+Depuis Streamlit (page *Drift & Apprentissage*) ou l'API (`POST /api/v1/drift/inject`,
+`POST /api/v1/drift/recover`), un cycle complet se déroule ainsi :
+
+1. **Injection** (scénario A/B/C/D) : des articles `SimulationDrift` entrent dans Kafka ;
+   le taux de fake glissant monte, le tri-détecteur déclenche, le LR passe à 5e-5.
+2. **Récupération** (automatique après la fenêtre de visualisation, ou manuelle) :
+   100 **vrais articles fiables déjà vus** par le pipeline (classés réels avec
+   confiance ≥ 0,9) sont rejoués. Spark met fin à la dérive (détecteurs
+   ré-initialisés, LR ramené à 1e-5) et journalise un événement `phase=recovery`.
+   Sans récupération, une dérive expire après `DRIFT_RESET_SECONDS` (600 s) sans
+   nouvelle détection.
+3. **Visualisation** : marqueurs rouge/vert sur Grafana (index `simulation-events`),
+   panneaux P3/P4/P5/P8/P9.
+
+`GET /api/v1/stats` distingue trois horizons :
+
+| Champ | Calcul | Usage |
+|---|---|---|
+| `fake_rate` / `real_rate` | 100 derniers articles traités (`FAKE_RATE_WINDOW`), simulations incluses | montre le drift puis le retour à la normale |
+| `fake_rate_24h` / `real_rate_24h` | flux réel des dernières 24 h | variation au fil du scraping temps réel |
+| `fake_rate_global` / `real_rate_global`, `total_articles` | cumul du **flux réel** (RSS, GDELT, recherche web) | tendance de fond |
+
+Les articles de simulation restent en base mais sont exclus des cumuls
+(`simulation_articles` les compte à part).
+
+**Cohérence Streamlit / Grafana.** Streamlit lit MongoDB (via l'API), Grafana lit
+Elasticsearch. Deux mécanismes garantissent qu'ils montrent les mêmes données :
+
+- la rangée « Indicateurs » de Grafana et la jauge P1 lisent **le même endpoint**
+  `/api/v1/stats` que Streamlit (datasource `API-Pipeline`, plugin Infinity 3.7.1) ;
+- un thread de l'API (`api/src/es_sync.py`) compare les deux bases toutes les
+  `ES_SYNC_INTERVAL_SECONDS` (300 s) et indexe dans Elasticsearch tout article
+  MongoDB manquant. Bilan : `GET /api/v1/sync/status` ; réconciliation immédiate :
+  `POST /api/v1/sync/run`.
+
+### Apprentissage continu : du flux scrapé au modèle servi
+
+1. Le producteur collecte RSS + GDELT toutes les ~90 s → Kafka → Spark (micro-batch 5 s).
+2. Chaque article est classé, stocké (MongoDB + Elasticsearch) et, si la confiance
+   dépasse 0,85, ajouté à l'apprentissage en ligne (1 pas de gradient tous les
+   `ONLINE_TRAIN_EVERY_N` lots, avec replay du reservoir équilibré).
+3. Tous les `SYNC_ONNX_EVERY` lots (100), les poids appris sont sauvegardés dans
+   `models/checkpoints/` et ré-exportés en ONNX dans `models/onnx/` : c'est ce modèle
+   qui classe les articles suivants (Spark), et l'API le recharge automatiquement
+   (recherche web). Marqueur bleu dans Grafana à chaque publication.
+4. Au redémarrage, Spark repart du dernier checkpoint (`ONLINE_RESUME_FROM_CHECKPOINT=true`)
+   et non du modèle d'origine : l'apprentissage s'accumule d'un redémarrage à l'autre.
+
+### 12. Alertes Grafana par e-mail
+
+Les 5 règles d'alerte sont routées vers le contact point `email-pipeline`
+(`config/grafana/provisioning/alerting/contactpoints.yml`), avec un e-mail à
+l'ouverture et à la résolution de l'alerte (rappel toutes les 4 h si elle persiste).
+Renseigner dans `.env` puis `docker compose up -d grafana` :
+
+```bash
+GRAFANA_SMTP_ENABLED=true
+GRAFANA_SMTP_HOST=smtp.gmail.com:587
+GRAFANA_SMTP_USER=votre.adresse@gmail.com
+GRAFANA_SMTP_PASSWORD=xxxxxxxxxxxxxxxx   # mot de passe d'application Google, pas le mot de passe du compte
+GRAFANA_SMTP_FROM=votre.adresse@gmail.com
+GRAFANA_ALERT_EMAIL=destinataire@exemple.com   # plusieurs adresses : séparées par « ; »
+```
+
+Test : Grafana → *Alerting* → *Contact points* → `email-pipeline` → *Test*.
 
 ---
 
@@ -343,6 +417,16 @@ depuis 2025).
 
 ## Limites connues
 
+- **Pseudo-labels** : faute de vérité terrain en flux, l'apprentissage en ligne s'entraîne
+  sur les prédictions du modèle lui-même (confiance > 0,85) — un biais peut s'auto-renforcer.
+- **Débit réel modeste** : 150 à 300 nouveaux articles par jour en flux RSS ; le modèle
+  appris n'est publié qu'après plusieurs heures de fonctionnement continu.
+- **Articles de simulation** (~21 700) conservés en base, exclus des statistiques cumulées
+  (`simulation_articles`) mais inclus dans le taux des 100 derniers articles.
+- **Accès distant** : les liens des e-mails d'alerte pointent vers `localhost:3000` ;
+  l'application Streamlit Cloud fonctionne en mode démonstration (données d'exemple) et
+  se met en veille après quelques jours sans visite. L'API n'a pas d'authentification :
+  ne pas l'exposer publiquement en l'état.
 - **LIAR** : F1 = 0,60 (vs > 0,97 sur WELFake / FakeNewsNet) — déclarations politiques
   courtes, sans article complet, stylistiquement éloignées du reste du corpus.
 - Peu d'exemples de désinformation **authentiquement africaine** (Africa Check inaccessible,
@@ -371,3 +455,28 @@ depuis 2025).
   (`producer/src/rss_sources.py`) — aucune source volontairement peu fiable n'est
   branchée, faute de liste vérifiable et maintenue de façon fiable pour ce dépôt ;
   seules des sources fact-checkées sont ingérées.
+
+## Historique des versions
+
+### v2.5 — 14/10/2026
+
+- **Récupération de drift** par rejeu de 100 vrais articles fiables (au lieu de titres
+  synthétiques classés fake à 50-67 %) ; fin de dérive explicite (détecteurs ré-initialisés,
+  lr ramené à 1e-5) et expiration après `DRIFT_RESET_SECONDS` (600 s).
+- **Statistiques** (`/api/v1/stats`) sur trois horizons : 100 derniers articles, 24 h, cumul du
+  flux réel ; simulations exclues des cumuls (flux réel mesuré : 86,7 % réel / 13,3 % fake).
+- **Grafana 10.4.19** : indicateurs identiques à Streamlit (plugin Infinity 3.7.1 sur
+  `/api/v1/stats`), 13 panneaux dont l'apprentissage continu (index `training-metrics`),
+  marqueurs injection / récupération / publication du modèle.
+- **Alertes** notifiées par e-mail (contact point `email-pipeline`) avec la valeur mesurée ;
+  correction des 4 règles bloquées en alerte permanente (moyenne « NaN » sur des minutes vides).
+- **Cohérence des bases** : dates normalisées en ISO 8601 dans Spark, réconciliation
+  MongoDB → Elasticsearch toutes les 5 min (`/api/v1/sync/status`, `/api/v1/sync/run`).
+- **Apprentissage continu conservé** : Spark repart du dernier checkpoint au redémarrage ;
+  l'API recharge automatiquement le modèle ONNX publié.
+- **Streamlit** : anneau Fake / Réel sur trois horizons, rafraîchissement automatique par défaut,
+  descriptions des scénarios alignées sur `scripts/inject_drift_simulation.py`.
+- **Documents** (mémoire, documentation technique, guide, questions/réponses, diapositives)
+  réalignés sur le code : tête de classification standard, pas de Mixup en production,
+  entraînement CPU (~10 h), tableau et graphiques du tri-détecteur, annexes régénérées.
+

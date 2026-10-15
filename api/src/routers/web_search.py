@@ -52,24 +52,42 @@ def _get_calibrator() -> ProbabilityCalibrator:
                  _calibrator.fitted)
     return _calibrator
 
+_model_mtime  = None
+
+
 def _get_model():
-    global _ort_session, _tokenizer
-    if _ort_session is None:
-        import onnxruntime as ort
-        from transformers import AutoTokenizer
-        model_path = os.path.join(ONNX_DIR, "model_quantized.onnx")
-        if not os.path.exists(model_path):
+    """Session ONNX, rechargée quand Spark publie un modèle mis à jour (v2.5).
+
+    Spark ré-exporte models/onnx/model_quantized.onnx après l'apprentissage en ligne
+    (OnlineTrainer -> sync_onnx). Sans rechargement, l'API classait indéfiniment avec
+    le modèle chargé à son démarrage. Le fichier n'est repris qu'une fois stable
+    depuis 60 s (export terminé) ; en cas d'échec, l'ancienne session est conservée.
+    """
+    global _ort_session, _tokenizer, _model_mtime
+    import onnxruntime as ort
+    from transformers import AutoTokenizer
+    model_path = os.path.join(ONNX_DIR, "model_quantized.onnx")
+    if not os.path.exists(model_path):
+        if _ort_session is None:
             raise RuntimeError(f"Modèle ONNX introuvable : {model_path}")
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = 2
-        opts.inter_op_num_threads = 1
-        _ort_session = ort.InferenceSession(
-            model_path,
-            sess_options=opts,
-            providers=["CPUExecutionProvider"],
-        )
-        _tokenizer = AutoTokenizer.from_pretrained(ONNX_DIR, local_files_only=True)
-        log.info("[web-search] Modèle ONNX chargé depuis %s", ONNX_DIR)
+        return _ort_session, _tokenizer
+    mtime = os.path.getmtime(model_path)
+    stale = _ort_session is not None and mtime != _model_mtime and time.time() - mtime > 60
+    if _ort_session is None or stale:
+        try:
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = 2
+            opts.inter_op_num_threads = 1
+            session = ort.InferenceSession(model_path, sess_options=opts,
+                                           providers=["CPUExecutionProvider"])
+            _tokenizer = AutoTokenizer.from_pretrained(ONNX_DIR, local_files_only=True)
+            _ort_session, _model_mtime = session, mtime
+            log.info("[web-search] Modèle ONNX %s depuis %s (version du %s)",
+                     "rechargé" if stale else "chargé", ONNX_DIR, time.ctime(mtime))
+        except Exception as e:
+            if _ort_session is None:
+                raise
+            log.warning("[web-search] Rechargement ONNX échoué, ancienne session conservée : %s", e)
     return _ort_session, _tokenizer
 
 
